@@ -97,6 +97,20 @@ html.scr-focus .scr-block:not(.scr-active) :not(mark.scr-hl, mark.scr-hl *, a, a
 html.scr-focus .scr-block:not(.scr-active) :is(mark.scr-hl, a) {
   -webkit-text-fill-color: currentColor !important;
 }
+/* The dimming can't go further without dropping below 4.5:1 contrast, so on
+   its own it was easy to miss ("focus does nothing"). Mark the paragraph you're
+   on clearly too: a bar in the margin plus a soft spotlight. box-shadow draws
+   outside the text, so the page layout doesn't move. */
+html.scr-focus .scr-block.scr-active {
+  box-shadow: -10px 0 0 -4px color-mix(in srgb, currentColor 70%, transparent),
+              0 0 0 6px color-mix(in srgb, currentColor 6%, transparent) !important;
+  background-color: color-mix(in srgb, currentColor 6%, transparent) !important;
+  border-radius: 3px;
+  transition: box-shadow 150ms ease, background-color 150ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.scr-focus .scr-block.scr-active { transition: none; }
+}
 
 /* ---------- 4. Read aloud: the sentence being spoken gets an outline (no color change) ---------- */
 .scr-speaking {
