@@ -81,6 +81,14 @@ html.scr-read.scr-theme-dark .scr-root,
   --scr-flash: #1a4f8b;
   --scr-flash-halo: #fff;
 }
+/* Study card: "Where?" / "Show in article" outlines the whole paragraph the same way. */
+.scr-block.scr-flash {
+  outline: 3px solid var(--scr-flash, #1a4f8b) !important;
+  outline-offset: 4px !important;
+  box-shadow: 0 0 0 7px var(--scr-flash-halo, #fff) !important;
+  border-radius: 2px;
+  animation: scr-flash-in 0.6s ease-out 2;
+}
 @keyframes scr-flash-in {
   0%   { outline-offset: 8px; outline-color: transparent; }
   100% { outline-offset: 2px; }
@@ -112,7 +120,7 @@ mark.scr-hl.scr-loading { animation: scr-pulse 0.9s ease-in-out infinite; }
   /* No pulsing: a still dashed outline says "working on it" instead. */
   mark.scr-hl.scr-loading { animation: none; outline: 2px dashed currentColor; outline-offset: 2px; }
   /* The jump outline just appears and stays still for its 1.5s. */
-  mark.scr-hl.scr-flash { animation: none; }
+  mark.scr-hl.scr-flash, .scr-block.scr-flash { animation: none; }
 }
 
 /* Screen-reader-only live region (announces "Simplifying…", the backbone, errors). */

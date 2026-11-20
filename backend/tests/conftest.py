@@ -16,6 +16,7 @@ def fresh_state(monkeypatch):
     # The caches live for the whole process; clear them so tests can't see each other's answers.
     main.ANALYZE_CACHE.clear()
     main.SIMPLIFY_CACHE.clear()
+    main.STUDY_CACHE.clear()
     monkeypatch.setattr(llm, "RETRY_DELAY_SECONDS", 0)
     # Rate limits are tested on their own (test_security_gate.py); the other
     # tests send many requests from one test client and would trip them.

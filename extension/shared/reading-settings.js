@@ -15,7 +15,7 @@ self.SCR_READING_DEFAULTS = {
   focusMode: false,         // dim every paragraph except the one you're on
   density: "all",           // "all" | "main-evidence" | "main"
   speechRate: 1,            // 0.7–1.5 step 0.1
-  speechVoice: "",          // SpeechSynthesisVoice.voiceURI, "" = browser default
+  speechVoice: "",          // chrome.tts voiceName, "" = Auto (best available, shared/voices.js)
   speechScope: "highlights" // "highlights" | "article"
 };
 

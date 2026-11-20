@@ -172,6 +172,107 @@ def mock_simplify(sentence: str) -> dict:
     return {"core": words[:2] + words[-2:] if len(words) > 4 else words}
 
 
+# --- mock /study -------------------------------------------------------------
+# Built from "key terms": the most repeated longer words of a paragraph. Single
+# words only, so the fake questions never copy whole sentences of the article.
+
+_WORD = re.compile(r"[^\W\d_]{4,}")  # letters only, at least 4 of them
+_STOPWORDS = {
+    "that", "this", "with", "from", "have", "were", "they", "their", "there", "which",
+    "what", "when", "where", "while", "would", "could", "should", "about", "after",
+    "before", "also", "than", "then", "them", "these", "those", "into", "more", "most",
+    "some", "such", "only", "other", "over", "very", "been", "being", "will", "your",
+    "said", "says", "many", "much", "each", "even", "just", "because", "between",
+    "every", "does", "here", "make", "made", "like", "still", "through", "under", "until",
+    "against", "among", "around", "during", "without", "within", "however", "although", "though",
+}
+# Wrong answers for a mock question when the article has too few other terms.
+_FILLERS = ["the weather", "a sports result", "a cooking recipe", "a celebrity wedding"]
+# Two templates, so a short article that quizzes one paragraph twice still
+# gets two different questions (the server drops duplicate questions).
+_QUIZ_TEMPLATES = [
+    "Which idea is the part of the article starting \u201c{start}\u2026\u201d mainly about?",
+    "Which of these comes up in the part of the article starting \u201c{start}\u2026\u201d?",
+]
+_PREQUESTION_TEMPLATES = [
+    "What does the article say about \u201c{term}\u201d?",
+    "Why might \u201c{term}\u201d matter here, and what does the author argue about it?",
+    "How does the article explain \u201c{term}\u201d?",
+]
+
+
+def _key_terms(text: str) -> list[str]:
+    """Non-stopwords of a paragraph: most repeated first, then longest, then first seen."""
+    counts, first_seen, spelling = {}, {}, {}
+    for i, match in enumerate(_WORD.finditer(text)):
+        word = match.group().lower()
+        if word in _STOPWORDS:
+            continue
+        counts[word] = counts.get(word, 0) + 1
+        first_seen.setdefault(word, i)
+        spelling.setdefault(word, match.group())
+    ranked = sorted(counts, key=lambda w: (-counts[w], -len(w), first_seen[w]))
+    return [spelling[w] for w in ranked]
+
+
+def _spread(items: list, n: int) -> list:
+    """n items spread evenly from the start to the end of the list (all if fewer)."""
+    if len(items) <= n:
+        return list(items)
+    if n == 1:
+        return [items[0]]
+    last = len(items) - 1
+    return [items[round(i * last / (n - 1))] for i in range(n)]
+
+
+def mock_study(paragraphs) -> dict:
+    """Fake but well-formed /study answer, the same every time for the same article.
+
+    Like a lazy model, it always puts the right answer first: the server's
+    shuffle is what moves it, so mock mode exercises that code too.
+    """
+    # One (paragraph, key term) pair per paragraph, each term used once.
+    picks, used = [], set()
+    for p in paragraphs:
+        for term in _key_terms(p.text):
+            if term.lower() not in used:
+                used.add(term.lower())
+                picks.append((p, term))
+                break
+    # Short articles: take a second term from the same paragraphs.
+    if len(picks) < 5:
+        for p in paragraphs:
+            for term in _key_terms(p.text):
+                if term.lower() not in used:
+                    used.add(term.lower())
+                    picks.append((p, term))
+                    break
+    order = {p.id: i for i, p in enumerate(paragraphs)}
+    picks.sort(key=lambda pick: order[pick[0].id])  # questions follow the article
+    all_terms = [term for _, term in picks]
+
+    prequestions = [
+        {"question": _PREQUESTION_TEMPLATES[i % 3].format(term=term), "paragraph_id": p.id}
+        for i, (p, term) in enumerate(_spread(picks, 3))
+    ]
+
+    quiz = []
+    for i, (p, term) in enumerate(_spread(picks, 5)):
+        start = " ".join(p.text.split()[:4])
+        lowered = p.text.lower()
+        # Wrong answers: terms of other paragraphs that this paragraph never uses.
+        wrong = [t for t in all_terms if t != term and t.lower() not in lowered]
+        options = [term] + (wrong + _FILLERS)[:3]
+        quiz.append({
+            "question": _QUIZ_TEMPLATES[i % 2].format(start=start),
+            "options": options,
+            "answer": 0,
+            "explanation": f"That part keeps coming back to \u201c{term}\u201d; the other options belong elsewhere or not at all.",
+            "paragraph_id": p.id,
+        })
+    return {"prequestions": prequestions, "quiz": quiz}
+
+
 async def analyze(paragraphs) -> dict:
     if MOCK:
         return mock_analyze(paragraphs)
@@ -185,3 +286,11 @@ async def simplify(sentence: str) -> dict:
     if MOCK:
         return mock_simplify(sentence)
     return await ask_json(prompts.SIMPLIFY_PROMPT.format(sentence=sentence))
+
+
+async def study(paragraphs) -> dict:
+    """Pre-questions and a quiz for one article: ONE Gemini call (or a mock answer)."""
+    if MOCK:
+        return mock_study(paragraphs)
+    prompt = prompts.STUDY_PROMPT.format(paragraphs=prompts.format_paragraphs(paragraphs))
+    return await ask_json(prompt)

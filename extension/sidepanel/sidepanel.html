@@ -26,7 +26,8 @@
   <main>
     <!-- ======== Hero ======== -->
     <section class="card hero" aria-labelledby="page-title">
-      <p class="eyebrow" id="page-title">This page</p>
+      <p class="kicker" aria-hidden="true">On this page</p>
+      <h2 id="page-title" class="page-title">This page</h2>
       <button id="analyze" class="primary" type="button">
         <span class="btn-label">Highlight this article</span>
         <span class="spinner" aria-hidden="true"></span>
@@ -52,85 +53,63 @@
       </div>
     </section>
 
-    <!-- ======== Reading comfort ======== -->
-    <section class="card comfort" aria-labelledby="comfort-title">
-      <h2 id="comfort-title">Reading comfort</h2>
+    <!-- ======== Study: pre-questions + quiz (built by study-panel.js) ======== -->
+    <section class="card study" aria-labelledby="study-title">
+      <h2 id="study-title">Study</h2>
+      <p class="hint">Questions before you read, a quiz after.</p>
 
-      <fieldset class="field presets">
-        <legend class="field-label">Preset <span id="preset-custom" class="tag" hidden>Custom</span></legend>
-        <div class="segmented">
-          <label><input type="radio" name="preset" value="off" aria-describedby="preset-desc-off"><span>Off</span></label>
-          <label><input type="radio" name="preset" value="easy" aria-describedby="preset-desc-easy"><span>Easy reading</span></label>
-          <label><input type="radio" name="preset" value="focus" aria-describedby="preset-desc-focus"><span>Focus</span></label>
+      <div class="stage">
+        <h3 class="stage-title">Before you read</h3>
+        <button id="study-get" class="secondary" type="button">
+          <span class="btn-label">Get questions</span>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
+        <!-- During the quiz the questions fold away to this one line (study-panel.js). -->
+        <button id="pre-toggle" class="text-btn" type="button" aria-expanded="false" aria-controls="pre-body" hidden>Show the questions</button>
+        <div id="pre-body" hidden>
+          <p id="pre-intro" class="hint pre-intro" tabindex="-1">Keep these in mind while you read.</p>
+          <ol id="pre-list" class="pre-list"></ol>
+          <button id="pre-where" class="text-btn" type="button" aria-expanded="false" aria-controls="pre-list">Show where</button>
         </div>
-        <p id="preset-desc-off" class="hint preset-desc" hidden>The page looks the way the site made it.</p>
-        <p id="preset-desc-easy" class="hint preset-desc" hidden>Bigger, more spaced-out text on a cream background. Some readers find it easier; tweak it below.</p>
-        <p id="preset-desc-focus" class="hint preset-desc" hidden>Easy reading, plus other paragraphs dimmed and only main points and evidence highlighted.</p>
-        <p id="preset-desc-custom" class="hint preset-desc" hidden>Your own mix of settings. Pick a preset to start over.</p>
-      </fieldset>
+      </div>
 
-      <button id="reader" class="secondary" type="button">Open clean reading view</button>
+      <div class="stage">
+        <h3 class="stage-title">After you read</h3>
+        <button id="quiz-start" class="secondary" type="button">
+          <span class="btn-label">Quiz me</span>
+          <span class="spinner" aria-hidden="true"></span>
+        </button>
 
-      <details class="disclosure" id="text-details">
-        <summary>Text</summary>
-        <div class="disclosure-body">
-          <p id="text-off-hint" class="hint" hidden>Not applied to the page yet. Changing any of these turns them on.</p>
-
-          <div class="field">
-            <label class="field-label" for="font">Font</label>
-            <select id="font"></select>
-          </div>
-
-          <div class="field range">
-            <div class="range-head"><label class="field-label" for="size">Text size</label><output id="size-out" for="size" aria-hidden="true"></output></div>
-            <input type="range" id="size" data-key="size" min="16" max="28" step="2">
-          </div>
-          <div class="field range">
-            <div class="range-head"><label class="field-label" for="letterSpacing">Letter spacing</label><output id="letterSpacing-out" for="letterSpacing" aria-hidden="true"></output></div>
-            <input type="range" id="letterSpacing" data-key="letterSpacing" min="0" max="0.25" step="0.01">
-          </div>
-          <div class="field range">
-            <div class="range-head"><label class="field-label" for="wordSpacing">Word spacing</label><output id="wordSpacing-out" for="wordSpacing" aria-hidden="true"></output></div>
-            <input type="range" id="wordSpacing" data-key="wordSpacing" min="0" max="0.5" step="0.02">
-          </div>
-          <div class="field range">
-            <div class="range-head"><label class="field-label" for="lineHeight">Line height</label><output id="lineHeight-out" for="lineHeight" aria-hidden="true"></output></div>
-            <input type="range" id="lineHeight" data-key="lineHeight" min="1.3" max="1.8" step="0.05">
-          </div>
-          <div class="field range">
-            <div class="range-head"><label class="field-label" for="lineWidth">Line width</label><output id="lineWidth-out" for="lineWidth" aria-hidden="true"></output></div>
-            <input type="range" id="lineWidth" data-key="lineWidth" min="40" max="80" step="5">
-          </div>
-
-          <fieldset class="field">
-            <legend class="field-label">Colors</legend>
-            <div class="themes" id="themes"></div>
+        <div id="quiz" class="quiz" hidden>
+          <p id="quiz-count" class="quiz-count" tabindex="-1">Question 1 of 5</p>
+          <fieldset class="quiz-q">
+            <legend id="quiz-question" class="quiz-question"></legend>
+            <!-- Native radios: arrow keys move between answers, Tab leaves the group. -->
+            <div id="quiz-options" class="quiz-options"></div>
           </fieldset>
-
-          <button id="reset-text" class="text-btn" type="button">Reset text settings</button>
+          <div id="quiz-feedback" class="quiz-feedback" hidden>
+            <p id="quiz-verdict" class="verdict"></p>
+            <p id="quiz-explain" class="quiz-explain"></p>
+            <button id="quiz-where" class="text-btn" type="button">Show in article</button>
+          </div>
+          <div class="quiz-actions">
+            <button id="quiz-check" class="primary compact" type="button">Check</button>
+            <button id="quiz-next" class="primary compact" type="button" hidden>Next</button>
+          </div>
         </div>
-      </details>
 
-      <div class="field switch-field">
-        <button id="focus-mode" class="switch" type="button" role="switch" aria-checked="false" aria-describedby="focus-hint">
-          <span class="switch-label">Focus mode</span>
-          <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-        </button>
-        <p id="focus-hint" class="hint">Dims other paragraphs. Move with your mouse or the J / K keys.</p>
+        <div id="quiz-result" class="quiz-result" hidden>
+          <p id="quiz-score" class="score" tabindex="-1"></p>
+          <p id="quiz-message" class="quiz-message"></p>
+          <div class="quiz-actions">
+            <button id="quiz-review" class="secondary compact" type="button">Review missed</button>
+            <button id="quiz-again" class="secondary compact" type="button">Try again</button>
+          </div>
+        </div>
+        <!-- What happened after "Check", for screen readers (the page shows it visually). -->
+        <p id="quiz-live" class="sr-only" aria-live="polite"></p>
       </div>
-
-      <fieldset class="field">
-        <legend class="field-label">Highlights to show</legend>
-        <div class="segmented" id="density"></div>
-      </fieldset>
-
-      <div class="field switch-field">
-        <button id="auto-apply" class="switch" type="button" role="switch" aria-checked="false" aria-describedby="auto-apply-hint">
-          <span class="switch-label">Use on every website</span>
-          <span class="track" aria-hidden="true"><span class="thumb"></span></span>
-        </button>
-        <p id="auto-apply-hint" class="hint">Off: settings apply only to pages where you use Skimatic. On: Chrome asks to let Skimatic read all sites, and your settings apply everywhere.</p>
-      </div>
+      <p id="study-status" class="status study-status" role="status"></p>
     </section>
 
     <!-- ======== Listen ======== -->
@@ -169,32 +148,125 @@
 
       <div class="field">
         <label class="field-label" for="voice">Voice</label>
-        <select id="voice"><option value="">Browser default</option></select>
+        <select id="voice"><option value="">Auto (best available)</option></select>
+        <!-- Shown by listen-panel.js only on a Mac with no Premium/Enhanced voice. -->
+        <p id="voice-hint" class="hint" hidden>Want a better voice? On a Mac: System Settings → Accessibility → Spoken Content → System voice → Manage voices, and download a Premium voice.</p>
       </div>
     </section>
 
-    <!-- ======== Colors ======== -->
-    <section class="card" aria-labelledby="colors-title">
+    <!-- ======== Reading comfort ======== -->
+    <section class="card comfort" aria-labelledby="comfort-title">
+      <!-- Collapsed by default: a heading with a disclosure button (screen readers can
+           still jump by heading). sidepanel.js opens/closes it and remembers the choice. -->
+      <h2 id="comfort-title" class="disclosure-head">
+        <button class="disclosure-btn" type="button" aria-expanded="false" aria-controls="comfort-body">Reading comfort<span class="chevron" aria-hidden="true"></span></button>
+      </h2>
+      <p class="hint">Presets, a clean reading view, focus mode and text settings.</p>
+      <div id="comfort-body" class="disclosure-panel" hidden>
+
+        <fieldset class="field presets">
+          <legend class="field-label">Preset <span id="preset-custom" class="tag" hidden>Custom</span></legend>
+          <div class="segmented">
+            <label><input type="radio" name="preset" value="off" aria-describedby="preset-desc-off"><span>Off</span></label>
+            <label><input type="radio" name="preset" value="easy" aria-describedby="preset-desc-easy"><span>Easy reading</span></label>
+            <label><input type="radio" name="preset" value="focus" aria-describedby="preset-desc-focus"><span>Focus</span></label>
+          </div>
+          <p id="preset-desc-off" class="hint preset-desc" hidden>The page looks the way the site made it.</p>
+          <p id="preset-desc-easy" class="hint preset-desc" hidden>Bigger, more spaced-out text on a cream background. Some readers find it easier; tweak it below.</p>
+          <p id="preset-desc-focus" class="hint preset-desc" hidden>Easy reading, plus other paragraphs dimmed and only main points and evidence highlighted.</p>
+          <p id="preset-desc-custom" class="hint preset-desc" hidden>Your own mix of settings. Pick a preset to start over.</p>
+        </fieldset>
+
+        <button id="reader" class="secondary" type="button">Open clean reading view</button>
+
+        <details class="disclosure" id="text-details">
+          <summary>Text</summary>
+          <div class="disclosure-body">
+            <p id="text-off-hint" class="hint" hidden>Not applied to the page yet. Changing any of these turns them on.</p>
+
+            <div class="field">
+              <label class="field-label" for="font">Font</label>
+              <select id="font"></select>
+            </div>
+
+            <div class="field range">
+              <div class="range-head"><label class="field-label" for="size">Text size</label><output id="size-out" for="size" aria-hidden="true"></output></div>
+              <input type="range" id="size" data-key="size" min="16" max="28" step="2">
+            </div>
+            <div class="field range">
+              <div class="range-head"><label class="field-label" for="letterSpacing">Letter spacing</label><output id="letterSpacing-out" for="letterSpacing" aria-hidden="true"></output></div>
+              <input type="range" id="letterSpacing" data-key="letterSpacing" min="0" max="0.25" step="0.01">
+            </div>
+            <div class="field range">
+              <div class="range-head"><label class="field-label" for="wordSpacing">Word spacing</label><output id="wordSpacing-out" for="wordSpacing" aria-hidden="true"></output></div>
+              <input type="range" id="wordSpacing" data-key="wordSpacing" min="0" max="0.5" step="0.02">
+            </div>
+            <div class="field range">
+              <div class="range-head"><label class="field-label" for="lineHeight">Line height</label><output id="lineHeight-out" for="lineHeight" aria-hidden="true"></output></div>
+              <input type="range" id="lineHeight" data-key="lineHeight" min="1.3" max="1.8" step="0.05">
+            </div>
+            <div class="field range">
+              <div class="range-head"><label class="field-label" for="lineWidth">Line width</label><output id="lineWidth-out" for="lineWidth" aria-hidden="true"></output></div>
+              <input type="range" id="lineWidth" data-key="lineWidth" min="40" max="80" step="5">
+            </div>
+
+            <fieldset class="field">
+              <legend class="field-label">Colors</legend>
+              <div class="themes" id="themes"></div>
+            </fieldset>
+
+            <button id="reset-text" class="text-btn" type="button">Reset text settings</button>
+          </div>
+        </details>
+
+        <div class="field switch-field">
+          <button id="focus-mode" class="switch" type="button" role="switch" aria-checked="false" aria-describedby="focus-hint">
+            <span class="switch-label">Focus mode</span>
+            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+          </button>
+          <p id="focus-hint" class="hint">Dims other paragraphs. Move with your mouse or the J / K keys.</p>
+        </div>
+
+        <fieldset class="field">
+          <legend class="field-label">Highlights to show</legend>
+          <div class="segmented" id="density"></div>
+        </fieldset>
+
+        <div class="field switch-field">
+          <button id="auto-apply" class="switch" type="button" role="switch" aria-checked="false" aria-describedby="auto-apply-hint">
+            <span class="switch-label">Use on every website</span>
+            <span class="track" aria-hidden="true"><span class="thumb"></span></span>
+          </button>
+          <p id="auto-apply-hint" class="hint">Off: settings apply only to pages where you use Skimatic. On: Chrome asks to let Skimatic read all sites, and your settings apply everywhere.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ======== Colors (collapsed; the "Show" switch stays in view) ======== -->
+    <section class="card colors" aria-labelledby="colors-title">
       <div class="section-head">
-        <h2 id="colors-title">Your colors</h2>
+        <h2 id="colors-title" class="disclosure-head">
+          <button class="disclosure-btn" type="button" aria-expanded="false" aria-controls="colors-body">Highlight colors<span class="chevron" aria-hidden="true"></span></button>
+        </h2>
         <button id="visible" class="switch" type="button" role="switch" aria-checked="true" aria-label="Show highlights on the page">
           <span class="switch-label" aria-hidden="true">Show</span>
           <span class="track" aria-hidden="true"><span class="thumb"></span></span>
         </button>
       </div>
-      <ul id="legend" class="legend"></ul>
-      <div class="card-actions">
-        <button id="reset-colors" class="text-btn" type="button">Reset to default colors</button>
-        <button id="clear" class="text-btn" type="button">Clear highlights</button>
+      <div id="colors-body" class="disclosure-panel" hidden>
+        <ul id="legend" class="legend"></ul>
+        <div class="card-actions">
+          <button id="reset-colors" class="text-btn" type="button">Reset to default colors</button>
+          <button id="clear" class="text-btn" type="button">Clear highlights</button>
+        </div>
+        <div class="tip">
+          <h3 id="tip-title" class="tip-title">Stuck on a sentence?</h3>
+          <p>Click any highlight (or Tab to it and press Enter) to see its backbone.</p>
+          <p class="tip-demo" aria-hidden="true">
+            <span class="demo-hl"><b>The committee</b><span class="fade">, after months of debate,</span> <b>approved the bill</b><span class="fade"> on Tuesday.</span></span>
+          </p>
+        </div>
       </div>
-    </section>
-
-    <section class="card tip" aria-labelledby="tip-title">
-      <h2 id="tip-title">Stuck on a sentence?</h2>
-      <p>Click any highlight (or Tab to it and press Enter) to see its backbone.</p>
-      <p class="tip-demo" aria-hidden="true">
-        <span class="demo-hl"><b>The committee</b><span class="fade">, after months of debate,</span> <b>approved the bill</b><span class="fade"> on Tuesday.</span></span>
-      </p>
     </section>
   </main>
 
@@ -228,9 +300,11 @@
   <script src="dev-stub.js"></script>
   <script src="../shared/roles.js"></script>
   <script src="../shared/reading-settings.js"></script>
+  <script src="../shared/voices.js"></script>
   <script src="sidepanel.js"></script>
   <script src="reading-panel.js"></script>
   <script src="listen-panel.js"></script>
   <script src="keypoints-panel.js"></script>
+  <script src="study-panel.js"></script>
 </body>
 </html>

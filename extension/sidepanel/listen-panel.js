@@ -1,6 +1,7 @@
 // "Listen" card: read aloud controls. The page does the speaking (speech.js); the panel
-// sends SPEAK / SPEECH_CONTROL and follows SPEECH_STATE. Voices come from the panel's own
-// speechSynthesis (same browser, same voice list). Uses helpers from sidepanel.js and
+// sends SPEAK / SPEECH_CONTROL and follows SPEECH_STATE. Voices come from chrome.tts, the
+// engine background.js speaks with, filtered and ranked by shared/voices.js (no novelty
+// voices, the reader's language, best first). Uses helpers from sidepanel.js and
 // reading-panel.js (scrReading / scrReadingChange).
 
 (function () {
@@ -121,29 +122,52 @@
   };
 
   // ---------- Voices ----------
+  // Value "" = "Auto (best available)": background.js picks the best voice with the
+  // same ranking each time it speaks, so a newly installed Premium voice is used at once.
+  const uiLang = navigator.language || "en-US";
+  let voices = [];   // ranked, at most 6
   let voiceKey = "";
+
+  function loadVoices() {
+    if (!chrome.tts || !chrome.tts.getVoices) return;
+    chrome.tts.getVoices((all) => {
+      voices = SCR_VOICES.rankVoices(all || [], uiLang, SCR_VOICES.OFFER_MAX);
+      fillVoices(scrReading().speechVoice);
+      showVoiceHint(all || []);
+    });
+  }
+
+  // The "download a Premium voice" tip only helps on a Mac that has none yet; anywhere
+  // else it's just more text, so it stays hidden (and out of the select's description).
+  function showVoiceHint(all) {
+    const hint = $("voice-hint");
+    const show = /Mac/.test(navigator.userAgent) && !all.some(SCR_VOICES.isHighQuality);
+    hint.hidden = !show;
+    if (show) voiceSelect.setAttribute("aria-describedby", "voice-hint");
+    else voiceSelect.removeAttribute("aria-describedby");
+  }
+
   function fillVoices(selected) {
-    const synth = globalThis.speechSynthesis;
-    const voices = synth ? synth.getVoices() : [];
-    const isEn = (v) => /^en\b|^en[-_]/i.test(v.lang);
-    const sorted = [...voices].sort((a, b) =>
-      (isEn(b) - isEn(a)) || a.lang.localeCompare(b.lang) || a.name.localeCompare(b.name)
-    );
-    const key = sorted.map((v) => v.voiceURI).join("|") + "#" + selected;
+    const key = voices.map((v) => v.voiceName).join("|") + "#" + selected;
     if (key === voiceKey) return;
     voiceKey = key;
     voiceSelect.textContent = "";
-    voiceSelect.append(new Option("Browser default", ""));
-    for (const v of sorted) voiceSelect.append(new Option(`${v.name} (${v.lang})`, v.voiceURI));
-    // keep a saved voice that this browser doesn't have (yet) selectable instead of losing it
-    if (selected && !sorted.some((v) => v.voiceURI === selected)) {
-      voiceSelect.append(new Option(`${selected} (not available)`, selected));
-    }
-    voiceSelect.value = selected || "";
+    const best = voices[0];
+    const auto = new Option(best ? `Auto · ${best.voiceName}` : "Auto (best available)", "");
+    auto.title = "Auto picks the best voice installed on this computer.";
+    voiceSelect.append(auto);
+    for (const v of voices) voiceSelect.append(new Option(SCR_VOICES.voiceLabel(v, uiLang), v.voiceName));
+    // A saved voice we don't offer (not installed here, novelty, other language, or
+    // below the top 6) plays as Auto: background.js uses the same SCR_VOICES.resolve.
+    voiceSelect.value = voices.some((v) => v.voiceName === selected) ? selected : "";
   }
-  if (globalThis.speechSynthesis) {
-    speechSynthesis.addEventListener("voiceschanged", () => fillVoices(scrReading().speechVoice));
-  }
+
+  loadVoices();
+  // Chrome can fill its voice list a moment after start-up, and voices can be
+  // installed while the panel is open: look again when the reader comes back.
+  setTimeout(loadVoices, 1500);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadVoices(); });
+  voiceSelect.addEventListener("focus", loadVoices);
 
   self.scrRenderListenSettings(scrReading());
   renderSpeech();

@@ -384,6 +384,7 @@ async function testPreview() {
     await page.waitForFunction(() => document.querySelectorAll("#kp-list li").length > 0, null, { timeout: 5000 }).catch(() => {});
     const n = await page.locator("#kp-list li").count();
     check("preview: Highlight fills the key points list", n > 0, `${n} items`);
+    await page.click('[aria-controls="comfort-body"]'); // Reading comfort starts collapsed
     await page.click("#auto-apply");
     await sleep(200);
     check("preview: 'Use on every website' switch toggles",

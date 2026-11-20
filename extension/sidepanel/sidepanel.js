@@ -4,6 +4,7 @@
 //   reading-panel.js – "Reading comfort" card
 //   listen-panel.js  – "Listen" card
 //   keypoints-panel.js – "Key points" card (jump to a highlight)
+//   study-panel.js   – "Study" card (questions before reading, quiz after)
 // See docs/ACCESSIBILITY.md for the message contract.
 
 const $ = (id) => document.getElementById(id);
@@ -156,6 +157,7 @@ onPageMessage("PROGRESS", renderProgress);
 function resetForNewPage() {
   showPageTitle();
   syncPageState();
+  if (self.scrStudyRefresh) scrStudyRefresh(); // that tab's questions, if it has any
 }
 if (chrome.tabs && chrome.tabs.onActivated) {
   chrome.tabs.onActivated.addListener((info) => {
@@ -454,6 +456,25 @@ if (chrome.storage.onChanged) {
     if (area === "sync" && changes.colors && !colorSaveTimer) loadColors(); // e.g. another window
   });
 }
+
+// ---------- Collapsible cards (Reading comfort, Highlight colors) ----------
+// A heading holding a button with aria-expanded (the disclosure pattern), so the
+// heading stays in the screen reader's heading list. Open/closed is remembered in
+// this browser only (a convenience; nothing breaks if storage is blocked).
+document.querySelectorAll(".disclosure-btn").forEach((btn) => {
+  const panel = $(btn.getAttribute("aria-controls"));
+  const key = "scrOpen:" + panel.id;
+  const show = (open) => {
+    btn.setAttribute("aria-expanded", String(open));
+    panel.hidden = !open;
+  };
+  try { show(localStorage.getItem(key) === "1"); } catch { show(false); }
+  btn.addEventListener("click", () => {
+    const open = btn.getAttribute("aria-expanded") !== "true";
+    show(open);
+    try { localStorage.setItem(key, open ? "1" : "0"); } catch { /* private window */ }
+  });
+});
 
 // ---------- Developer tools ----------
 $("debug").hidden = !devToolsAllowed();

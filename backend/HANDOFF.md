@@ -74,6 +74,30 @@ Blair's spec asks for an in-memory dict. Use that. I have a working MongoDB Atla
 
 - `main` is capped at 3 per article after merging chunks (`cap_main` in main.py); the first 3 in article order are kept.
 
+## `/study`: pre-questions and a quiz (active recall)
+
+- `POST /study` (contract in `docs/API_CONTRACT.md`) returns 3 questions to think about before
+  reading and a 5-question multiple-choice quiz for after. **Always one Gemini call per article**:
+  only the first 25,000 characters (`STUDY_MAX_CHARS`, whole paragraphs in order) are sent.
+- Prompt: `STUDY_PROMPT` in `prompts.py` (article between `<<<ARTICLE` markers as data, same
+  language as the article, key ideas not date/number trivia, plausible wrong options from the
+  same article, explanation grounded in the text).
+- Cleaning: `filters.clean_study` keeps only known `paragraph_id`s, trimmed non-empty strings,
+  question ≤ 200 / option ≤ 120 characters, exactly 4 different options, `answer` 0–3; strips
+  HTML tags (an option that is only a tag, like `<b>` on an article about HTML, is kept as
+  written: the panel shows it with textContent) and invisible format characters (zero-width
+  space, bidi overrides); options count as "the same" after case, spacing, end punctuation and
+  NFKC folding, but `2:1` and `2.1` stay different; drops duplicate questions and extra fields; caps 3 + 5. An explanation over 200
+  characters is shortened with "…" (not dropped: it's only a hint). Fewer than 2 quiz items
+  left → 502 and nothing cached.
+- Options are shuffled by `filters.shuffle_options`, seeded by a hash of the question, so the
+  right answer isn't always A (models love A) and the same quiz always looks the same.
+- Limits: same 400/413/422 as `/analyze`; per-IP bucket `study` = 3/minute, 20/hour, checked
+  only on a cache miss; counts toward `DAILY_AI_BUDGET`; errors mapped like `/analyze`.
+- Mock mode (`llm.mock_study`) builds deterministic questions from each paragraph's most repeated
+  longer words and always puts the right answer first, so the shuffle runs in mock mode too.
+- Tests: `tests/test_study.py`.
+
 ## Not done
 
 - Scoring the current prompts against `gold.json` with the real model (blocked on quota; the commands are ready).
@@ -89,4 +113,10 @@ Ask me. I know where the bodies are buried in the prompt.
 
 - The backend never stores or logs article text. Logs hold counts, cache hit/miss and error *types* (e.g. `ClientError 400 INVALID_ARGUMENT`), never error messages, which could quote the request.
 - The cache keeps only positions `(paragraph id, start, end, role)` under a sha256 key. Sentences are cut back out of the article the extension sends again, so the cache contains no text.
-- Pitch line: "Skimatic never stores or logs what you read."
+- `/study` is the one exception to "positions only": its cache (`STUDY_CACHE`, same sha256 key
+  scheme) stores the AI-written questions, options and explanations, because they can't be
+  rebuilt from positions. Cached questions may paraphrase the article (and the mock's quiz
+  questions quote the first few words of a paragraph). They are kept in memory only, cleared on
+  restart, and never logged: `/study` logs only counts and cache hit/miss.
+- Pitch line: "Skimatic never stores or logs what you read." (Honest version with `/study`:
+  "Skimatic never logs what you read, and keeps nothing after a restart.")

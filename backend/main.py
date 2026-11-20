@@ -144,6 +144,11 @@ PARALLEL_CALLS = 2  # chunks sent at the same time (more trips the per-minute li
 # Same article or sentence again -> answer from memory, no Gemini call.
 ANALYZE_CACHE = cache.LRUCache(256)
 SIMPLIFY_CACHE = cache.LRUCache(256)
+# /study answers are AI-written questions, not article sentences (see HANDOFF.md, Privacy).
+STUDY_CACHE = cache.LRUCache(256)
+# /study is always ONE Gemini call, so it only sees the start of a very long
+# article: about the size of one /analyze chunk, which Gemini answers reliably.
+STUDY_MAX_CHARS = 25_000
 
 
 class Paragraph(BaseModel):
@@ -163,6 +168,28 @@ class Highlight(BaseModel):
 
 class AnalyzeResponse(BaseModel):
     highlights: list[Highlight]
+
+
+class StudyRequest(BaseModel):
+    paragraphs: list[Paragraph]  # same shape and limits as /analyze
+
+
+class PreQuestion(BaseModel):
+    question: str
+    paragraph_id: int
+
+
+class QuizItem(BaseModel):
+    question: str
+    options: list[str]
+    answer: int
+    explanation: str
+    paragraph_id: int
+
+
+class StudyResponse(BaseModel):
+    prequestions: list[PreQuestion]
+    quiz: list[QuizItem]
 
 
 class SimplifyRequest(BaseModel):
@@ -465,3 +492,72 @@ async def simplify(req: SimplifyRequest, request: Request):
 
     # Map the answer onto this request's spacing (a cache hit may differ in whitespace).
     return SimplifyResponse(core=filters.clean_core(core, req.sentence))
+
+
+# ---------------------------------------------------------------------------
+# /study: questions before reading, a quiz after (one Gemini call per article)
+# ---------------------------------------------------------------------------
+
+MIN_QUIZ = 2  # fewer than this is not worth showing as a quiz
+
+
+class StudyAnswerTooThin(Exception):
+    """The model's answer had fewer than MIN_QUIZ usable quiz questions.
+
+    error_kind() files it under "other", so the reader gets the usual
+    "The AI didn't answer properly. Try again."
+    """
+
+
+def study_paragraphs(paragraphs: list[Paragraph]) -> list[Paragraph]:
+    """The paragraphs the model sees: from the start, up to STUDY_MAX_CHARS characters.
+
+    Whole paragraphs only, so every paragraph_id it answers with is one the
+    page has. A first paragraph longer than the budget is cut, not skipped.
+    """
+    kept, total = [], 0
+    for p in paragraphs:
+        if total + len(p.text) > STUDY_MAX_CHARS:
+            break
+        kept.append(p)
+        total += len(p.text)
+    if not kept:
+        first = paragraphs[0]
+        kept = [Paragraph(id=first.id, text=first.text[:STUDY_MAX_CHARS])]
+    return kept
+
+
+def study_key(paragraphs: list[Paragraph]) -> str:
+    return cache.make_key(
+        model_name(), prompts.STUDY_PROMPT, [[p.id, cache.normalize(p.text)] for p in paragraphs]
+    )
+
+
+async def ask_study(paragraphs: list[Paragraph], key: str) -> dict:
+    """One Gemini call; cleans the answer and caches it only if the quiz is usable."""
+    ratelimit.take_ai_call()  # 6.3 optional daily cap for the whole server
+    result = filters.clean_study(await llm.study(paragraphs), paragraphs)
+    if len(result["quiz"]) < MIN_QUIZ:
+        raise StudyAnswerTooThin()  # not cached: asking again may go better
+    STUDY_CACHE.put(key, result)
+    return result
+
+
+@app.post("/study", response_model=StudyResponse)
+async def study(req: StudyRequest, request: Request):
+    paragraphs = study_paragraphs(check_limits(req.paragraphs))
+    key = study_key(paragraphs)
+
+    result = STUDY_CACHE.get(key)
+    if result is not None:
+        log.info("study: cache hit")
+    else:
+        ratelimit.check("study", request)  # 6.1 only uncached articles count
+        try:
+            result = await ask_once(key, lambda: ask_study(paragraphs, key))
+        except Exception as e:
+            raise llm_failure(e)
+        # Counts only: never the article or the questions (they may paraphrase it).
+        log.info("study: cache miss, %d paragraphs sent, %d prequestions, %d quiz items",
+                 len(paragraphs), len(result["prequestions"]), len(result["quiz"]))
+    return StudyResponse(**result)

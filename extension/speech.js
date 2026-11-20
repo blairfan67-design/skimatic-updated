@@ -14,14 +14,14 @@
 
   const P = self.SCR_PAGE;
   const speakViaExtension = (text) =>
-    chrome.runtime.sendMessage({ type: "TTS_SPEAK", text, rate, voice: voiceURI });
+    chrome.runtime.sendMessage({ type: "TTS_SPEAK", text, rate, voice: voiceName });
   const silence = () => chrome.runtime.sendMessage({ type: "TTS_STOP" }).catch(() => {});
 
   let queue = [];          // [{ text, marks: [<mark>] | null, block: Element | null }]
   let index = 0;           // which sentence (0-based)
   let state = "stopped";   // "playing" | "paused" | "stopped"
   let rate = 1;
-  let voiceURI = "";
+  let voiceName = "";
   // Every sentence gets a ticket. A replaced or cancelled sentence still reports
   // back, so we only react to answers for the newest ticket.
   let ticket = 0;
@@ -138,7 +138,7 @@
     queue = items;
     index = 0;
     rate = Number(r) > 0 ? Number(r) : 1;
-    voiceURI = voice || "";
+    voiceName = voice || "";
     speakCurrent();
     return { ok: true, total: queue.length };
   }
@@ -199,7 +199,7 @@
     if (area !== "sync" || !changes.reading) return;
     const r = changes.reading.newValue || {};
     if (Number(r.speechRate) > 0) rate = Number(r.speechRate);
-    if (typeof r.speechVoice === "string") voiceURI = r.speechVoice;
+    if (typeof r.speechVoice === "string") voiceName = r.speechVoice;
   });
 
   // The sentences we were reading are gone or about to move: stop.

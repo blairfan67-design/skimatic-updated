@@ -547,6 +547,60 @@
     return reveal.saved.then(() => ({ ok: true, id, revealed: reveal.revealed }));
   }
 
+  // ---------- 7c. Jump to a paragraph (Study card: "Where?" / "Show in article") ----------
+  // The panel names a paragraph by the id EXTRACT gave it. Those ids count only the
+  // paragraphs sent to the backend (long enough, no headings), while data-scr-block
+  // counts every block on the page, so the two numbers can differ. We find the block
+  // by its text only: an id with no extracted paragraph is "not on the page" (never
+  // guessed from data-scr-block, which would land on an unrelated block).
+  let lastParagraphs = null; // { url, texts: [paragraph text by id] } from the last EXTRACT
+  let blockFlashTimer = 0;
+
+  function paragraphText(id) {
+    if (!lastParagraphs || lastParagraphs.url !== pageKey()) {
+      lastParagraphs = { url: pageKey(), texts: extractArticle().paragraphs.map((p) => p.text) };
+    }
+    return lastParagraphs.texts[id] || "";
+  }
+
+  function findParagraphBlock(id) {
+    const blocks = ensureBlocks(getRoot()); // the reading view's blocks while it's open
+    const text = paragraphText(id);
+    if (!text) return null; // unknown id, or the page's paragraphs changed
+    const exact = blocks.find((b) => SCR.normalize(b.textContent || "") === text);
+    if (exact) return exact;
+    // A simplified highlight or a late page edit can change a few characters.
+    const start = text.slice(0, 60);
+    return blocks.find((b) => SCR.normalize(b.textContent || "").startsWith(start)) || null;
+  }
+
+  function jumpToParagraph(msg) {
+    const id = msg.paragraph_id;
+    const block = Number.isInteger(id) && id >= 0 ? findParagraphBlock(id) : null;
+    if (!block) return { ok: false, error: "That part of the article isn't on the page." };
+
+    block.scrollIntoView({ block: "center", behavior: reduceMotion() ? "auto" : "smooth" });
+
+    // Outline the paragraph for a moment (content.css: .scr-block.scr-flash).
+    clearTimeout(blockFlashTimer);
+    document.querySelectorAll(".scr-block.scr-flash").forEach((b) => b.classList.remove("scr-flash"));
+    block.classList.add("scr-flash");
+    blockFlashTimer = setTimeout(() => block.classList.remove("scr-flash"), 1500);
+
+    // Keyboard focus there, so reading (or Tab) continues from this paragraph. A
+    // paragraph isn't focusable: borrow tabindex=-1 and give it back on blur, so
+    // the page's own markup is left as it was.
+    if (!block.hasAttribute("tabindex")) {
+      block.setAttribute("tabindex", "-1");
+      block.addEventListener("blur", () => block.removeAttribute("tabindex"), { once: true });
+    }
+    block.focus({ preventScroll: true });
+
+    if (self.SCR_PAGE.isFocusMode && self.SCR_PAGE.isFocusMode()) self.SCR_PAGE.setActiveBlock(block);
+    announce("Jumped to that part of the article.");
+    return { ok: true };
+  }
+
   // The shown highlights changed (eye buttons, density, master switch): the
   // panel greys out the hidden ones. Only on a highlighted page.
   on("roles", () => { if (firstMarks().length) sendHighlightsState(); });
@@ -661,6 +715,7 @@
   };
   handlers.EXTRACT = () => {
     const article = extractArticle();
+    lastParagraphs = { url: pageKey(), texts: article.paragraphs.map((p) => p.text) };
     markBlocks(); // the page's blocks, for reading settings, focus mode and progress
     checkDarkSite();
     console.log("[SCR] extracted", article.paragraphs.length, "paragraphs", article);
@@ -686,6 +741,7 @@
     return { ok: true };
   };
   handlers.JUMP_TO = (msg) => jumpTo(msg || {});
+  handlers.JUMP_TO_PARAGRAPH = (msg) => jumpToParagraph(msg || {});
   // How many highlights per role the backend sent (null = this page isn't highlighted).
   function roleCounts() {
     if (!lastHighlights.length) return null;

@@ -30,6 +30,10 @@ hidden text, footnote markers…) — note which sentences failed.
 - [ ] On a tab Skimatic wasn't used on, the panel says it can't read it; clicking the toolbar
       icon (or Alt+Shift+H) on that tab fixes it
 - [ ] "Use on every website" asks Chrome for permission; turning it off removes it
+- [ ] Study: "Get questions" shows 3 questions; "Show where" → "Where?" scrolls to the paragraph
+- [ ] Study: "Quiz me" → 5 questions, Check / Next, score, "Review missed", "Try again" (no new AI call)
+- [ ] Study: closing and reopening the panel keeps the questions; reloading the page clears them
+- [ ] Listen: the voice list has no novelty voices (Bubbles, Zarvox…); "Auto" reads with the best one
 - [ ] `NODE_PATH=$(npm root -g) node testing/security/run.js` passes (backend running with
       `MOCK_LLM=1`). It checks the manifest, the reading view sanitizer, forged highlights,
       message sender checks, fingerprinting and the main features in a real Chromium.

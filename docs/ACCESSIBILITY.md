@@ -217,7 +217,11 @@ dropped. Never move parsed nodes into the page (`adoptNode`/`append` of DOMParse
 
 - **Hero card.** Add a progress line under the status: "4 of 12 key points seen · about 6 min
   left". This is plain text, not live (it would be too chatty).
-- **New "Reading comfort" card**, between the hero and "Your colors":
+- **Card order** (default view): hero (Highlight) → Key points → Study → Listen → Reading comfort
+  (collapsed) → Highlight colors (collapsed; its "Show" switch stays visible). The collapsed cards
+  use a heading that holds a disclosure button (`aria-expanded`, `aria-controls`), so they stay in
+  the screen reader's heading list; the open/closed state is remembered per browser (localStorage).
+- **"Reading comfort" card**:
   - Presets as a radio group (segmented look): Off · Easy reading · Focus. It shows "Custom"
     when the settings don't match a preset. Each has a one-line honest description.
   - "Open clean reading view" button (toggles to "Close reading view"; follows `READER_STATE`).
@@ -230,8 +234,7 @@ dropped. Never move parsed nodes into the page (`adoptNode`/`append` of DOMParse
   - Highlight density as a radio group (`SCR_DENSITY` labels).
 - **New "Listen" card:** play/pause toggle, stop, previous and next buttons (icon buttons with
   aria-labels, ≥ 32px); a scope radio (Highlighted sentences / Whole article); a speed slider
-  (0.7–1.5×); a voice `<select>` filled from the panel's own `speechSynthesis.getVoices()`
-  (listen for `voiceschanged`), English voices first; and the state text "Reading sentence 3
+  (0.7–1.5×); a voice `<select>` (see "Voices" below); and the state text "Reading sentence 3
   of 12" with role=status.
 - **Apply the reader's text settings to the panel itself**: font family plus letter/word spacing
   (the size scales the panel's root font-size from size/20, clamped to 0.9–1.3).
@@ -349,3 +352,111 @@ next jump:
   the last 5s (never steal attention).
 - Empty state: "Click “Highlight this article” and the key points will show up here."
 - Must work in preview mode (dev-stub fakes `HIGHLIGHTS_STATE`, `JUMP_TO` incl. `revealed` and the role + sentence fallback, `currentId` / `seenIds`).
+
+## Study: questions before reading, a quiz after
+
+A "Study" card right after Key points. Two evidence-based study habits, kept calm:
+
+| Feature | Evidence | Notes |
+|---|---|---|
+| Pre-questions ("Before you read") | moderate | Asking questions before reading improves memory for the asked-about content (Carpenter & Toftness 2017; Pan & Sana 2021) |
+| Retrieval practice ("After you read") | strong | Testing yourself beats re-reading (Roediger & Karpicke 2006; Adesope et al. 2017 meta-analysis), with feedback and an explanation after each answer |
+
+Deliberately **not** built: timers, streaks, confetti, points, sounds (gamification adds pressure
+and distraction, especially for ADHD readers).
+
+**Messages** (panel → background; only the side panel may send them):
+
+| type | payload | reply |
+|---|---|---|
+| `STUDY` | `{cachedOnly?: bool}` | `{title, prequestions: [{question, paragraph_id}], quiz: [{question, options[4], answer, explanation, paragraph_id}], cached?}`; with `cachedOnly`, `null` when this tab has nothing yet (never calls the AI) |
+| `JUMP_TO_PARAGRAPH` | `{paragraph_id}` (integer 0–199, checked) | forwarded to the page (no injection): `{ok}` or `{ok:false, error:"That part of the article isn't on the page."}` |
+
+- The background extracts the article like `ANALYZE_ACTIVE_TAB` (`EXTRACT`), sends at most the
+  first 25,000 characters of paragraphs to `POST /study` (one AI call; see docs/API_CONTRACT.md),
+  checks every field again, and keeps the answer per tab in `chrome.storage.session` (memory only,
+  not readable by content scripts) together with the page URL. A new page in that tab
+  (`tabs.onUpdated` loading) or closing the tab clears it. So reopening the panel or switching
+  back to the tab shows the same questions without another AI call; quiz progress is kept per page
+  while the panel stays open.
+- **Paragraph ids vs page blocks.** The ids are the indexes of the paragraphs `EXTRACT` sent (long
+  enough, no headings), while `data-scr-block` numbers every block on the page (headings too), so
+  the two can differ. The page finds the block whose normalized text equals that paragraph's text
+  (first 60 characters as a fallback). An id with no extracted paragraph (out of range, or the
+  page changed) replies `{ok:false, error:"That part of the article isn't on the page."}`; it is
+  never guessed from `data-scr-block`, which uses a different numbering.
+  Inside the reading view it searches the reading view's blocks.
+- On `JUMP_TO_PARAGRAPH` the page scrolls the block to the center (`smooth`, or `auto` under
+  reduced motion), outlines it with `.scr-flash` for ~1.5s (static under reduced motion), moves
+  focus to it (borrowing `tabindex=-1`, removed again on blur), makes it `.scr-active` in focus
+  mode and announces "Jumped to that part of the article." through `#scr-live`.
+
+**Panel UI**
+- "Before you read": "Get questions" (busy state on the button). Then 3 questions in an `<ol>`
+  with "Keep these in mind while you read." Answers are never shown. Each question has a
+  "Where?" button (accessible name "Where? Question 2") that jumps to the paragraph, hidden until
+  the reader presses "Show where" (`aria-expanded`), so readers try to remember first.
+- "After you read": "Quiz me" (uses the same answer; calls the AI only if nothing was loaded yet).
+  Starting the quiz folds "Before you read" to one "Show the 3 questions" button
+  (`aria-expanded`, `aria-controls="pre-body"`), so the quiz starts near the top of the card;
+  "Try again" unfolds it.
+  One question at a time, "Question 2 of 5" (focus moves there), the question as the `<legend>`
+  of a `<fieldset>` with 4 native radios (arrow keys move, one Tab stop). "Check" with nothing
+  picked says "Pick an answer first." After checking, the radios are read-only, the right option
+  says "✓ Correct answer" and a wrong pick "✗ Your answer" (color **and** words), the explanation
+  and "Show in article" appear, and "Check" turns into "Next" (focus moves to it). A visually
+  hidden `aria-live="polite"` region reads the result and explanation.
+- End: score "4 of 5" (focus moves there) and one plain sentence; "Review missed" walks through
+  the missed questions with the right answer and scrolls the page to each; "Try again" shuffles
+  the questions and options locally (no AI call).
+- Errors (no access, offline, no article, rate limit, daily quota, bad AI answer) use the same
+  friendly messages as the hero, in `#study-status` (`role=status`).
+- AI text is always set with `textContent`.
+- A `STUDY` reply that arrives after the reader switched tabs (or the page changed) is dropped
+  (a generation counter in study-panel.js), so one tab's questions never show while another tab
+  is in front; background.js has kept them for their own tab.
+
+## Voices (Listen card)
+
+The voice list comes from `chrome.tts.getVoices()`, the engine background.js speaks with, through
+`extension/shared/voices.js` (loaded by the panel and, with `importScripts`, by the service worker,
+so both rank voices the same way):
+
+- **Removed:** macOS novelty and joke voices (Albert, Bad News, Bahh, Bells, Boing, Bubbles,
+  Cellos, Good News, Jester, Organ, Pipe Organ, Superstar, Trinoids, Whisper, Wobble, Zarvox,
+  Deranged, Hysterical), old robotic ones (Fred, Junior, Ralph, Kathy, Princess, Agnes, Bruce,
+  Vicki, Victoria), the "Eloquence" voices (Eddy, Flo, Grandma, Grandpa, Reed, Rocko, Sandy,
+  Shelley) and eSpeak/MBROLA/Festival/"compact" engines.
+- **Kept:** voices in the reader's language (`navigator.language`) and English, best first:
+  names with Premium / Enhanced / Neural / Natural / Siri ("High quality" in the label), then
+  Chrome's Google voices ("Online"), then known good system voices (Samantha, Daniel, …). At most 6.
+- **"Auto · <voice>"** is the default (`speechVoice: ""`); it names the voice Auto picks right now.
+  background.js resolves it on every sentence with the same ranking, so a newly installed Premium
+  voice is used right away. A saved voice the dropdown doesn't offer (not installed here, deny
+  list, other language, or below the top 6) also plays as Auto: panel and background both call
+  `SCR_VOICES.resolve()`, so the dropdown always shows the voice you hear.
+- Hint under the dropdown, shown only on a Mac with no Premium/Enhanced voice installed (elsewhere
+  it's hidden and not in the select's `aria-describedby`): "Want a better voice? On a Mac: System Settings → Accessibility →
+  Spoken Content → System voice → Manage voices, and download a Premium voice."
+- Default speed stays 1.0×.
+
+## Panel look: frosted glass (and how it stays accessible)
+
+Chrome's side panel can't show the web page behind it, so the "transparent" look is the panel's
+own soft, tinted backdrop showing through translucent cards (`rgba` surfaces, hairline borders,
+no drop shadows, one muted accent, 8px spacing scale, three corner radii, serif only for the brand
+and the article title). The real frosted glass (`backdrop-filter: blur()`) is the sticky
+masthead, which the cards scroll under; the cards themselves aren't blurred (over smooth
+gradients the blur was invisible and cost a GPU layer per card).
+
+- Contrast is measured on the drawn result: each translucent surface composited over the darkest
+  and lightest part of the backdrop, light and dark. Lowest measured: text 5.0:1 (light) / 5.1:1
+  (dark), UI borders 3.6:1. Re-measure when changing a token. Exception: the idle Listen buttons
+  (stop / previous / next, `aria-disabled="true"` while nothing is read) have a hairline ring;
+  inactive controls are exempt from 1.4.11, their glyphs stay ≥ 4.5:1, and the full border
+  returns when reading starts.
+- `@media (prefers-contrast: more)`: opaque surfaces and masthead, darker borders, no blur.
+- `@supports not (backdrop-filter)`: nearly opaque surfaces and a solid masthead, so text never
+  sits on a muddy mix.
+- Focus rings, targets ≥ 24px (quiz rows ≥ 36px; the whole row is the label), 180px / 200% zoom
+  reflow and reduced motion work as before.

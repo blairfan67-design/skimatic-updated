@@ -1,4 +1,4 @@
-importScripts("shared/roles.js", "shared/reading-settings.js");
+importScripts("shared/roles.js", "shared/reading-settings.js", "shared/voices.js");
 
 // Background service worker: the only part that talks to the backend.
 // Side panel  -> background -> content script (extract) -> backend -> content script (paint)
@@ -103,8 +103,9 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
   if (info.status === "loading") forgetHighlights(tabId).catch(() => {}); // a new page
 });
 
-async function analyzeActiveTab() {
-  const tabId = await activeTabId();
+// Ask the page for its article (Readability runs in the page). Shared by
+// ANALYZE_ACTIVE_TAB and STUDY.
+async function extractArticle(tabId) {
   const extracted = await sendToTab(tabId, { type: "EXTRACT" });
   const data = (extracted && extracted.data) || {};
   const title = typeof data.title === "string" ? data.title.slice(0, 500) : "";
@@ -114,6 +115,12 @@ async function analyzeActiveTab() {
     .slice(0, 80)
     .map((p) => ({ id: p.id, text: p.text.slice(0, 20000) }));
   if (!paragraphs.length) throw new Error("Couldn't find an article on this page.");
+  return { title, paragraphs };
+}
+
+async function analyzeActiveTab() {
+  const tabId = await activeTabId();
+  const { title, paragraphs } = await extractArticle(tabId);
 
   const result = await callBackend("/analyze", { paragraphs });
   const highlights = (Array.isArray(result && result.highlights) ? result.highlights : [])
@@ -157,6 +164,77 @@ async function simplify(msg, sender) {
   if (simplifyCache.size > 200) simplifyCache.delete(simplifyCache.keys().next().value);
   return clean;
 }
+
+// ---------- Study: questions before reading, a quiz after (POST /study) ----------
+// One AI call per article. The backend only reads the first ~25,000 characters, so we
+// don't send more than that (less of the reader's page leaves the browser).
+const STUDY_MAX_CHARS = 25_000;
+// The answer is kept per tab (storage.session: in memory, trusted contexts only), so
+// reopening the panel or coming back to the tab doesn't spend another AI call.
+// A new page in that tab clears it (see forgetStudy below).
+const studyKey = (tabId) => `study:${tabId}`;
+
+function firstChars(paragraphs, max) {
+  const out = [];
+  let used = 0;
+  for (const p of paragraphs) {
+    if (used >= max) break;
+    const text = p.text.slice(0, max - used);
+    out.push({ id: p.id, text });
+    used += text.length;
+  }
+  return out;
+}
+
+// The backend validates the AI's output already; we check the shape again, because
+// whatever we hand the panel is rendered there (as text, never HTML).
+const cleanText = (v, max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+function cleanStudy(result, ids) {
+  const known = (id) => Number.isInteger(id) && ids.has(id);
+  const prequestions = (Array.isArray(result && result.prequestions) ? result.prequestions : [])
+    .map((q) => ({ question: cleanText(q && q.question, 200), paragraph_id: q && q.paragraph_id }))
+    .filter((q) => q.question && known(q.paragraph_id))
+    .slice(0, 3);
+  const quiz = (Array.isArray(result && result.quiz) ? result.quiz : [])
+    .map((q) => ({
+      question: cleanText(q && q.question, 200),
+      options: Array.isArray(q && q.options) ? q.options.map((o) => cleanText(o, 120)) : [],
+      answer: q && q.answer,
+      explanation: cleanText(q && q.explanation, 200),
+      paragraph_id: q && q.paragraph_id,
+    }))
+    .filter((q) => q.question && known(q.paragraph_id) &&
+      q.options.length === 4 && q.options.every(Boolean) && new Set(q.options).size === 4 &&
+      Number.isInteger(q.answer) && q.answer >= 0 && q.answer <= 3)
+    .slice(0, 5);
+  return { prequestions, quiz };
+}
+
+async function studyActiveTab(msg) {
+  const tab = await activeTab();
+  const key = studyKey(tab.id);
+  const url = (tab.url || "").split("#")[0];
+  const stored = (await chrome.storage.session.get(key))[key];
+  if (stored && url && stored.url === url) return { ...stored.data, cached: true };
+  // The panel only asks what we already have (opening the panel, switching tabs).
+  if (msg.cachedOnly) return null;
+
+  const { title, paragraphs } = await extractArticle(tab.id);
+  const result = await callBackend("/study", { paragraphs: firstChars(paragraphs, STUDY_MAX_CHARS) });
+  const clean = cleanStudy(result, new Set(paragraphs.map((p) => p.id)));
+  if (clean.quiz.length < 2) throw new Error("The AI didn't answer properly. Try again.");
+  const data = { title, ...clean };
+  if (url) await chrome.storage.session.set({ [key]: { url, data } });
+  return data;
+}
+
+async function forgetStudy(tabId) {
+  await chrome.storage.session.remove(studyKey(tabId));
+}
+chrome.tabs.onRemoved.addListener((tabId) => { forgetStudy(tabId).catch(() => {}); });
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status === "loading") forgetStudy(tabId).catch(() => {}); // a new page
+});
 
 // ---------- Reading settings on every site (opt-in) ----------
 // Off by default: the page scripts only run where the user used Skimatic. A reader
@@ -273,6 +351,15 @@ const panelHandlers = {
     text: str(m.text, 2000),
     n: Number.isInteger(m.n) && m.n > 0 ? m.n : 1,
   }), { inject: false }),
+  // Study card (docs/ACCESSIBILITY.md, "Study"). `cachedOnly`: never call the AI,
+  // just say what this tab already has (or null).
+  STUDY: (msg) => studyActiveTab({ cachedOnly: msg.cachedOnly === true }),
+  // "Where?" / "Show in article": scroll the page to one of the article's paragraphs.
+  JUMP_TO_PARAGRAPH: async (msg) => {
+    const id = msg.paragraph_id;
+    if (!Number.isInteger(id) || id < 0 || id >= 200) throw new Error("Bad paragraph");
+    return sendToTab(await activeTabId(), { type: "JUMP_TO_PARAGRAPH", paragraph_id: id }, { inject: false });
+  },
   AUTO_APPLY_STATE: async () => ({ on: await autoApplyOn() }),
   AUTO_APPLY: (msg) => setAutoApply(msg.on === true),
 };
@@ -285,11 +372,14 @@ const panelHandlers = {
 const TTS_MAX_CHARS = 2000; // one sentence; anything longer is cut, never refused
 let ttsTabId = null;        // the tab whose sentence is being spoken
 
+// The reader's voice, or "Auto (best available)" when none is picked (""), or the
+// picked one isn't installed here (settings sync between computers), or the panel
+// doesn't offer it (novelty voice, other language, below the top 6). Same rule as the
+// panel (SCR_VOICES.resolve), so the dropdown always names the voice that speaks.
 async function voiceNameFor(wanted) {
-  if (typeof wanted !== "string" || !wanted) return undefined;
   const voices = await new Promise((res) => chrome.tts.getVoices((v) => res(v || [])));
-  const match = voices.find((v) => v.voiceName === wanted);
-  return match ? match.voiceName : undefined; // unknown voice: use the default
+  const voice = SCR_VOICES.resolve(voices, wanted, navigator.language || "en-US");
+  return voice ? voice.voiceName : undefined; // nothing suitable: Chrome's default voice
 }
 
 // Resolves when the sentence ends: {ended} | {interrupted} | {error}.

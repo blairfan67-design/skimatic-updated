@@ -7,7 +7,8 @@
 //   sidepanel.html?state=error    -> server ok, but the page isn't an article
 //
 // It also fakes the "Reading comfort" messages (READER, SPEAK, SPEECH_CONTROL,
-// GET_PAGE_STATE, JUMP_TO) and sends fake page -> panel events (SPEECH_STATE, PROGRESS
+// GET_PAGE_STATE, JUMP_TO), the Study card (STUDY, JUMP_TO_PARAGRAPH), chrome.tts
+// voices (a Mac-like list with novelty voices, to see the filter) and sends fake page -> panel events (SPEECH_STATE, PROGRESS
 // with seenIds / currentId, READER_STATE, HIGHLIGHTS_STATE) to chrome.runtime.onMessage
 // listeners. Settings are kept in localStorage
 // and chrome.storage.onChanged fires like the real thing. In the console:
@@ -43,6 +44,55 @@
     { role: "counter",    text: "Because the study only followed a handful of animals in tanks, wild octopuses might sleep quite differently." },
   ].map((h, i) => ({ id: String(i + 1), ...h }));
   const ARTICLE_SENTENCES = 38;
+
+  // What /study would return for the octopus article (shape: docs/API_CONTRACT.md).
+  // The correct option is not always first: the backend shuffles them.
+  const fakeStudy = {
+    title: "Octopuses change color in their sleep",
+    prequestions: [
+      { question: "What do octopuses do with their skin while they sleep, and how often?", paragraph_id: 2 },
+      { question: "Why might a two-stage sleep have evolved in such different animals?", paragraph_id: 7 },
+      { question: "What makes some biologists doubt that octopuses dream?", paragraph_id: 4 },
+    ],
+    quiz: [
+      { question: "About how often did the sleeping octopuses flash through bursts of color?",
+        options: ["Every few seconds", "Roughly every hour", "Once a night", "Only when touched"], answer: 1,
+        explanation: "The article says their skin flashed through bursts of color roughly every hour during quiet sleep.", paragraph_id: 2 },
+      { question: "How long did the active, colorful sleep bouts last?",
+        options: ["About ten minutes", "About half an hour", "About a minute", "Several hours"], answer: 2,
+        explanation: "The active bouts lasted only about a minute, and the animals were harder to wake then.", paragraph_id: 3 },
+      { question: "Where are most of an octopus's neurons?",
+        options: ["In its central brain", "Spread through its arms", "In its eyes", "In its skin"], answer: 1,
+        explanation: "About two thirds of its roughly 500 million neurons are spread through its eight arms.", paragraph_id: 5 },
+      { question: "What happened when researchers kept the octopuses awake?",
+        options: ["They slept less the next day", "They stopped changing color", "They became aggressive", "They made up for it with extra active sleep"], answer: 3,
+        explanation: "Like mammals, they caught up with extra active sleep the next day.", paragraph_id: 8 },
+      { question: "Why might wild octopuses sleep differently from the ones in the study?",
+        options: ["The study followed only a few animals in tanks", "Wild octopuses have fewer neurons", "The tanks were kept dark all day", "Wild octopuses never change color"], answer: 0,
+        explanation: "The study only followed a handful of animals in tanks, so wild behavior may differ.", paragraph_id: 11 },
+    ],
+  };
+  const FAKE_PARAGRAPHS = 14;
+
+  // A Mac-like chrome.tts voice list: a few good voices, many novelty ones.
+  const fakeVoices = [
+    "Albert", "Bad News", "Bahh", "Bells", "Boing", "Bubbles", "Cellos", "Good News", "Jester",
+    "Organ", "Superstar", "Trinoids", "Whisper", "Wobble", "Zarvox", "Fred", "Junior", "Ralph",
+    "Kathy", "Princess", "Grandma (English (US))", "Grandpa (English (US))", "Eddy (English (US))",
+    "Flo (English (US))", "Reed (English (US))", "Rocko (English (US))", "Sandy (English (US))",
+    "Shelley (English (US))",
+  ].map((voiceName) => ({ voiceName, lang: "en-US", remote: false }))
+    .concat([
+      { voiceName: "Samantha", lang: "en-US", remote: false },
+      { voiceName: "Ava (Premium)", lang: "en-US", remote: false },
+      { voiceName: "Daniel", lang: "en-GB", remote: false },
+      { voiceName: "Moira", lang: "en-IE", remote: false },
+      { voiceName: "Google US English", lang: "en-US", remote: true },
+      { voiceName: "Google UK English Female", lang: "en-GB", remote: true },
+      { voiceName: "Zoe (Enhanced)", lang: "en-US", remote: false },
+      { voiceName: "Thomas", lang: "fr-FR", remote: false },
+      { voiceName: "Anna", lang: "de-DE", remote: false },
+    ]);
 
   // ---- fake page state ----
   const page = {
@@ -204,6 +254,28 @@
       return revealed ? { ok: true, id: fakeHighlights[at].id, revealed } : { ok: true, id: fakeHighlights[at].id };
     },
 
+    // ---- Study card ----
+    // Like background.js: the answer is kept for this "tab" until it changes, so
+    // cachedOnly (panel opened / tab switched) never "calls the AI".
+    STUDY: async (msg) => {
+      if (page.study) return { ...page.study, cached: true };
+      if (msg.cachedOnly) return null;
+      await wait(1400);
+      if (state === "offline") throw new Error("Failed to fetch");
+      if (state === "error") throw new Error("Couldn't find an article on this page.");
+      page.study = clone(fakeStudy);
+      return clone(page.study);
+    },
+    JUMP_TO_PARAGRAPH: async (msg) => {
+      await wait(80);
+      const id = msg.paragraph_id;
+      if (!Number.isInteger(id) || id < 0 || id >= FAKE_PARAGRAPHS) {
+        return { ok: false, error: "That part of the article isn't on the page." };
+      }
+      console.log("[preview] page scrolled to paragraph", id);
+      return { ok: true };
+    },
+
     // ---- Reading comfort (replies are shaped like the page's replies) ----
     READER: async (msg) => {
       await wait(150);
@@ -315,6 +387,7 @@
       onUpdated: { addListener() {} },
     },
     windows: { getCurrent: async () => ({ id: 1 }) },
+    tts: { getVoices: (cb) => setTimeout(() => cb(clone(fakeVoices)), 0) },
     // "Use on every website": the preview always says yes to the permission prompt.
     permissions: { request: async () => true, remove: async () => true },
   };
@@ -324,7 +397,7 @@
     emit,
     page,
     reset() { store.write({}); location.reload(); },
-    switchTab() { page.analyzed = false; page.reader = false; page.progress = null; page.visible = true; page.hiddenRoles.clear(); page.seen.clear(); page.jumped = null; clearInterval(scrollTimer); stopSpeech(); tabListeners.forEach((f) => f({ tabId: 2, windowId: 1 })); },
+    switchTab() { page.study = null; page.analyzed = false; page.reader = false; page.progress = null; page.visible = true; page.hiddenRoles.clear(); page.seen.clear(); page.jumped = null; clearInterval(scrollTimer); stopSpeech(); tabListeners.forEach((f) => f({ tabId: 2, windowId: 1 })); },
   };
   console.log(`[preview] Skimatic side panel in preview mode (state=${state})`);
 })();

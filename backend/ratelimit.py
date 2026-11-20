@@ -23,6 +23,8 @@ from fastapi import HTTPException, Request
 LIMITS = {
     "analyze": [(60, 5), (3600, 30)],
     "simplify": [(60, 20), (3600, 120)],
+    # One call per article, and readers study far fewer articles than they skim.
+    "study": [(60, 3), (3600, 20)],
 }
 TOO_FAST = "You're going too fast. Please wait a minute and try again."
 

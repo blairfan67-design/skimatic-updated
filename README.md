@@ -13,7 +13,8 @@ docs/       API contract (read this first!), roadmap, prompt notes
 **How it fits together:** side panel button → `background.js` asks the page's
 `content.js` to extract the article (Readability.js) → `background.js` POSTs the
 paragraphs to the backend `/analyze` → Gemini picks sentences → `content.js`
-paints them with `highlight.js`. Clicking a highlight calls `/simplify`.
+paints them with `highlight.js`. Clicking a highlight calls `/simplify`. The Study card
+calls `/study` (questions before reading, a quiz after) the same way.
 
 The request/response shapes are in [docs/API_CONTRACT.md](docs/API_CONTRACT.md).
 The plan and who-does-what is in [docs/ROADMAP.md](docs/ROADMAP.md).
@@ -30,7 +31,9 @@ The plan and who-does-what is in [docs/ROADMAP.md](docs/ROADMAP.md).
   - Clean reading view without ads or menus (Alt+Shift+R).
   - Focus mode dims the other paragraphs; move with the mouse or J / K (Alt+Shift+F).
   - Highlight density: all 4 roles, main + evidence, or main only.
-- **Listen**: reads the highlighted sentences, or the whole article, aloud one sentence at a time, with speed and voice controls.
+- **Study** (side panel): before reading, 3 questions to keep in mind (with a hidden "Where?" that jumps to the answer's paragraph); after reading, a calm 5-question multiple-choice quiz with explanations, "Show in article", "Review missed" and "Try again". One AI call per article, remembered for that tab.
+- **Listen**: reads the highlighted sentences, or the whole article, aloud one sentence at a time, with speed and voice controls. The voice list hides novelty voices (Bubbles, Zarvox, …), keeps a few natural ones and defaults to "Auto (best available)".
+- **Frosted-glass panel**: a calm, translucent look, light and dark, with an opaque high-contrast fallback.
 - **Progress**: "4 of 12 key points seen · about 6 min left".
 
 Why each feature exists, and what we deliberately left out (e.g. "dyslexia fonts", Bionic Reading), is in [docs/ACCESSIBILITY.md](docs/ACCESSIBILITY.md).
