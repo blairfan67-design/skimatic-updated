@@ -54,7 +54,7 @@ def test_normal_requests_still_work_under_the_cap():
 def test_config_errors_do_not_name_settings_or_paths(monkeypatch, caplog):
     from google.genai import errors
 
-    async def bad_key(_):
+    async def bad_key(_, **kw):
         raise errors.ClientError(400, {"error": {"code": 400, "message": "API key not valid.",
                                                  "status": "INVALID_ARGUMENT"}})
     monkeypatch.setattr(main.llm, "analyze", bad_key)
@@ -120,9 +120,9 @@ def test_analyze_burst_is_stopped_before_gemini(limits_on, monkeypatch):
     calls = []
     real = main.llm.analyze
 
-    async def counting(paragraphs):
+    async def counting(paragraphs, **kw):
         calls.append(1)
-        return await real(paragraphs)
+        return await real(paragraphs, **kw)
     monkeypatch.setattr(main.llm, "analyze", counting)
     codes = [client.post("/analyze", json=article(i)).status_code for i in range(10)]
     assert codes[:5] == [200] * 5 and set(codes[5:]) == {429}
@@ -192,7 +192,7 @@ def test_cache_hit_rebuilds_the_same_answer_even_with_different_spacing(monkeypa
     para = "Prices rose sharply in May. Analysts were surprised by the jump."
     first = client.post("/analyze", json={"paragraphs": [{"id": 0, "text": para}]}).json()
 
-    async def must_not_call(_):
+    async def must_not_call(_, **kw):
         raise AssertionError("should have been a cache hit")
     monkeypatch.setattr(main.llm, "analyze", must_not_call)
     spaced = para.replace(" sharply", "  sharply")  # same article, different whitespace
@@ -215,7 +215,7 @@ def test_simplify_cache_hit_rebuilds_pieces(monkeypatch):
 def test_error_messages_never_reach_the_log(monkeypatch, caplog):
     caplog.set_level(logging.DEBUG)
 
-    async def boom(_):
+    async def boom(_, **kw):
         raise RuntimeError("upstream said: " + MARK)
     monkeypatch.setattr(main.llm, "analyze", boom)
     monkeypatch.setattr(main.llm, "simplify", boom)

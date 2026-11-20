@@ -94,19 +94,30 @@
     return !el.querySelector("p, li, blockquote");
   }
 
+  // Sent to the backend so the AI sees the article's structure (Introduction,
+  // Results...); the backend refuses longer ones, so cut here.
+  const MAX_TITLE_CHARS = 300;
+  const MAX_HEADING_CHARS = 200;
+
   function extractArticle() {
     const article = parseArticle();
     if (!article) return { title: document.title, paragraphs: [] };
 
     const paragraphs = [];
-    articleDoc(article).querySelectorAll("p, li, blockquote").forEach((el) => {
+    let heading = ""; // the nearest h1-h4 above the current block, in document order
+    articleDoc(article).querySelectorAll("h1, h2, h3, h4, p, li, blockquote").forEach((el) => {
+      if (/^H[1-4]$/.test(el.tagName)) {
+        heading = self.SCR_cutText(SCR.normalize(el.textContent || ""), MAX_HEADING_CHARS);
+        return;
+      }
       if (!isLeafBlock(el)) return;
       const text = SCR.normalize(el.textContent || "");
       if (text.length >= MIN_PARAGRAPH_CHARS && paragraphs.length < MAX_PARAGRAPHS) {
-        paragraphs.push({ id: paragraphs.length, text });
+        paragraphs.push({ id: paragraphs.length, text, heading });
       }
     });
-    return { title: article.title, paragraphs };
+    const title = self.SCR_cutText(SCR.normalize(article.title || ""), MAX_TITLE_CHARS);
+    return { title, paragraphs };
   }
 
   // ---------- 2. Article blocks: tag the live paragraphs so we can style them ----------

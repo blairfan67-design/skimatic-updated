@@ -108,12 +108,17 @@ chrome.tabs.onUpdated.addListener((tabId, info) => {
 async function extractArticle(tabId) {
   const extracted = await sendToTab(tabId, { type: "EXTRACT" });
   const data = (extracted && extracted.data) || {};
-  const title = typeof data.title === "string" ? data.title.slice(0, 500) : "";
+  const title = typeof data.title === "string" ? SCR_cutText(data.title, 500) : "";
   // The page shapes what Readability returns: keep only well-formed paragraphs.
   const paragraphs = (Array.isArray(data.paragraphs) ? data.paragraphs : [])
     .filter((p) => p && Number.isInteger(p.id) && typeof p.text === "string")
     .slice(0, 80)
-    .map((p) => ({ id: p.id, text: p.text.slice(0, 20000) }));
+    .map((p) => ({
+      id: p.id,
+      text: SCR_cutText(p.text, 20000),
+      // Optional section heading (the backend accepts at most 200 characters).
+      heading: typeof p.heading === "string" ? SCR_cutText(p.heading, 200) : "",
+    }));
   if (!paragraphs.length) throw new Error("Couldn't find an article on this page.");
   return { title, paragraphs };
 }
@@ -122,7 +127,9 @@ async function analyzeActiveTab() {
   const tabId = await activeTabId();
   const { title, paragraphs } = await extractArticle(tabId);
 
-  const result = await callBackend("/analyze", { paragraphs });
+  // The title and headings help the AI tell the main point from evidence and
+  // background. The backend accepts a title of at most 300 characters.
+  const result = await callBackend("/analyze", { title: SCR_cutText(title, 300), paragraphs });
   const highlights = (Array.isArray(result && result.highlights) ? result.highlights : [])
     .filter((h) => h && typeof h.text === "string" && SCR_ROLE_KEYS.includes(h.role))
     .map((h) => ({ paragraph_id: h.paragraph_id, text: h.text, role: h.role }));

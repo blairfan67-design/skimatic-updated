@@ -32,7 +32,7 @@ def test_analyze_returns_exact_substrings():
 
 
 def test_analyze_drops_hallucinated_text(monkeypatch):
-    async def fake(_):
+    async def fake(_, **kw):
         return {"highlights": [
             {"paragraph_id": 0, "text": "Not in the paragraph.", "role": "main"},
             {"paragraph_id": 0, "text": "Cats sleep a lot.", "role": "nonsense"},

@@ -100,39 +100,74 @@ def is_transient(exc: Exception) -> bool:
 # The actual call
 # ---------------------------------------------------------------------------
 
-async def _generate(prompt: str) -> str:
-    """One raw Gemini request. Returns the reply text. Tests replace this function."""
+def analyze_schema():
+    """Gemini structured output for /analyze: the reply must be this JSON shape.
+
+    "thesis" comes first (propertyOrdering), so the model writes the article's
+    central claim before it labels anything, and role is an enum, so it can't
+    invent a fifth role. The prompt still spells out the shape and the server
+    still filters every highlight: the schema fixes the shape, not the content.
+    """
     from google.genai import types
 
+    string = types.Schema(type=types.Type.STRING)
+    highlight = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "paragraph_id": types.Schema(type=types.Type.INTEGER),
+            "text": string,
+            "role": types.Schema(type=types.Type.STRING, format="enum", enum=list(ROLES)),
+        },
+        required=["paragraph_id", "text", "role"],
+        property_ordering=["paragraph_id", "text", "role"],
+    )
+    return types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "thesis": string,
+            "highlights": types.Schema(type=types.Type.ARRAY, items=highlight),
+        },
+        required=["thesis", "highlights"],
+        property_ordering=["thesis", "highlights"],
+    )
+
+
+async def _generate(prompt: str, schema=None) -> str:
+    """One raw Gemini request. Returns the reply text. Tests replace this function.
+
+    With a schema, Gemini's structured output holds the reply to that shape;
+    without one (simplify, study) it is plain JSON mode as before.
+    """
+    from google.genai import types
+
+    options = {"response_mime_type": "application/json", "temperature": 0.2}
+    if schema is not None:
+        options["response_schema"] = schema
+    config = types.GenerateContentConfig(**options)
     resp = await asyncio.wait_for(
-        _get_client().aio.models.generate_content(
-            model=MODEL,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
-        ),
+        _get_client().aio.models.generate_content(model=MODEL, contents=prompt, config=config),
         timeout=TIMEOUT_SECONDS,
     )
     return resp.text
 
 
-async def ask_json(prompt: str) -> dict:
+async def ask_json(prompt: str, schema=None) -> dict:
     """Send one prompt to Gemini and parse its JSON reply.
 
     Retries once after a short pause if the failure looks temporary (timeout,
     5xx). Never retries a 429, a bad key or a missing model: those would fail
     the same way. Only one retry, because the free tier allows ~20 requests a day.
     """
+    # Without a schema, call _generate exactly as before (one argument).
+    extra = {} if schema is None else {"schema": schema}
     try:
-        text = await _generate(prompt)
+        text = await _generate(prompt, **extra)
     except Exception as e:
         if not is_transient(e):
             raise
         log.warning("Gemini call failed (%s: %s), retrying once", error_kind(e), describe(e))
         await asyncio.sleep(RETRY_DELAY_SECONDS)
-        text = await _generate(prompt)
+        text = await _generate(prompt, **extra)
     return json.loads(text)
 
 
@@ -155,8 +190,12 @@ def _sentences(text: str) -> list[str]:
     return [p.strip() for p in pieces if p.strip()]
 
 
-def mock_analyze(paragraphs) -> dict:
-    """Fake but well-formed result: first sentence of each paragraph, cycling roles."""
+def mock_analyze(paragraphs, title: str = "", context: str = "") -> dict:
+    """Fake but well-formed result: first sentence of each paragraph, cycling roles.
+
+    Like the real model it also writes a "thesis", which the server must drop.
+    The context paragraph is never highlighted (the real model is told so too).
+    """
     highlights = []
     for i, p in enumerate(paragraphs):
         sents = _sentences(p.text)
@@ -164,7 +203,7 @@ def mock_analyze(paragraphs) -> dict:
             highlights.append(
                 {"paragraph_id": p.id, "text": sents[0], "role": ROLES[i % len(ROLES)]}
             )
-    return {"highlights": highlights}
+    return {"thesis": "Mock thesis: this article makes one point.", "highlights": highlights}
 
 
 def mock_simplify(sentence: str) -> dict:
@@ -273,13 +312,20 @@ def mock_study(paragraphs) -> dict:
     return {"prequestions": prequestions, "quiz": quiz}
 
 
-async def analyze(paragraphs) -> dict:
-    if MOCK:
-        return mock_analyze(paragraphs)
-    prompt = prompts.ANALYZE_PROMPT.format(
-        paragraphs=prompts.format_paragraphs(paragraphs)
+def analyze_prompt(paragraphs, title: str = "", context: str = "") -> str:
+    """The /analyze prompt for one chunk. `context` is the article's first paragraph,
+    shown read-only to chunks that don't contain it."""
+    return prompts.ANALYZE_PROMPT.format(
+        title=prompts.format_title(title),
+        paragraphs=prompts.format_paragraphs(paragraphs, context=context),
     )
-    return await ask_json(prompt)
+
+
+async def analyze(paragraphs, title: str = "", context: str = "") -> dict:
+    """Highlights (and a "thesis", which only the server sees) for one chunk."""
+    if MOCK:
+        return mock_analyze(paragraphs, title=title, context=context)
+    return await ask_json(analyze_prompt(paragraphs, title, context), schema=analyze_schema())
 
 
 async def simplify(sentence: str) -> dict:

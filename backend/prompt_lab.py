@@ -7,7 +7,10 @@
     python prompt_lab.py --score-simplify --limit 10
 
 Paragraphs in test_paragraphs.txt are separated by a blank line. Lines starting
-with '#' are comments (use them to label the article type).
+with '#' are comments (use them to label the article type), except two kinds that
+give the model the structure the extension sends: "# title: ..." (the article
+title) and "# heading: ..." (the section heading of this and the following
+paragraphs). --plain ignores both, to compare with runs made without them.
 Edit prompts.py, re-run, compare. Write down what worked in docs/PROMPT_NOTES.md.
 
 Quota: the free tier allows ~20 Gemini calls a day. --score costs exactly 1
@@ -31,15 +34,34 @@ from main import Paragraph
 HERE = Path(__file__).parent
 
 
-def load_paragraphs(path: Path) -> list[Paragraph]:
+_DIRECTIVE = re.compile(r"#\s*(title|heading):\s*(.*)", re.IGNORECASE)
+
+
+def load_paragraphs(path: Path, structure: bool = True) -> list[Paragraph]:
+    """Paragraphs of a test file; with `structure`, each gets its "# heading:"."""
     blocks = path.read_text(encoding="utf-8").split("\n\n")
-    texts = []
+    paras, heading = [], ""
     for b in blocks:
-        lines = [l for l in b.splitlines() if not l.lstrip().startswith("#")]
+        lines = []
+        for line in b.splitlines():
+            directive = _DIRECTIVE.fullmatch(line.strip())
+            if directive and directive.group(1).lower() == "heading":
+                heading = directive.group(2).strip()
+            if not line.lstrip().startswith("#"):
+                lines.append(line)
         t = " ".join(l.strip() for l in lines).strip()
         if t:
-            texts.append(t)
-    return [Paragraph(id=i, text=t) for i, t in enumerate(texts)]
+            paras.append(Paragraph(id=len(paras), text=t, heading=heading if structure else ""))
+    return paras
+
+
+def load_title(path: Path) -> str:
+    """The "# title:" line of a test file, or ""."""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        directive = _DIRECTIVE.fullmatch(line.strip())
+        if directive and directive.group(1).lower() == "title":
+            return directive.group(2).strip()
+    return ""
 
 
 def norm(text: str) -> str:
@@ -112,9 +134,18 @@ def is_exact(h, by_id: dict) -> bool:
 # Plain run (the original prompt_lab behaviour)
 # ---------------------------------------------------------------------------
 
-async def run_plain(paras: list[Paragraph]) -> None:
+def print_thesis(result) -> None:
+    """The model's one-sentence thesis (never sent to the extension; shown here
+    because a wrong thesis explains wrong roles)."""
+    thesis = result.get("thesis") if isinstance(result, dict) else None
+    print(f"thesis: {thesis if isinstance(thesis, str) and thesis else '(none)'}\n")
+
+
+async def run_plain(paras: list[Paragraph], title: str = "") -> None:
     try:
-        raw = highlights_of(await llm.analyze(paras))
+        result = await llm.analyze(paras, title=title)
+        print_thesis(result)
+        raw = highlights_of(result)
     except Exception as e:
         report_failed_call(e)
         return
@@ -149,11 +180,11 @@ def gold_picks(paras: list[Paragraph], gold: list[dict]) -> dict:
     return picks
 
 
-async def score_analyze(paras: list[Paragraph], gold: list[dict]) -> None:
+async def score_analyze(paras: list[Paragraph], gold: list[dict], title: str = "") -> None:
     # One call for all paragraphs on purpose (no chunking): 21 paragraphs fit easily.
     start = time.perf_counter()
     try:
-        result = await llm.analyze(paras)
+        result = await llm.analyze(paras, title=title)
     except Exception as e:
         report_failed_call(e)
         return
@@ -179,6 +210,7 @@ async def score_analyze(paras: list[Paragraph], gold: list[dict]) -> None:
     gold_roles = Counter(gold_set.values())
 
     print(f"Analyze score: {len(paras)} paragraphs, 1 call, {seconds:.1f} s\n")
+    print_thesis(result)
     print(f"  exact-match rate      {exact}/{len(raw)} = {pct(exact, len(raw))}   (target >= 90%)")
     print(f"  kept after filter     {len(kept)}")
     print(f"  sentences highlighted {len(kept)}/{total_sentences} = {pct(len(kept), total_sentences)}"
@@ -283,19 +315,23 @@ async def main():
     ap.add_argument("--score", action="store_true", help="compare /analyze with gold.json (1 call)")
     ap.add_argument("--score-simplify", action="store_true", help="compare /simplify with gold_simplify.json")
     ap.add_argument("--limit", type=int, default=5, help="sentences for --score-simplify (1 call each)")
+    ap.add_argument("--plain", action="store_true", help="ignore '# title:' and '# heading:' lines")
     args = ap.parse_args()
+    path = Path(args.file)
+    title = "" if args.plain else load_title(path)
+    paras = load_paragraphs(path, structure=not args.plain)
 
     print(f"model={llm.MODEL} mock={llm.MOCK}\n")
     if args.simplify:
         print(json.dumps(await llm.simplify(args.simplify), indent=2))
     elif args.score:
         gold = json.loads((HERE / "gold.json").read_text(encoding="utf-8"))
-        await score_analyze(load_paragraphs(Path(args.file)), gold)
+        await score_analyze(paras, gold, title)
     elif args.score_simplify:
         gold = json.loads((HERE / "gold_simplify.json").read_text(encoding="utf-8"))
         await score_simplify(gold, args.limit)
     else:
-        await run_plain(load_paragraphs(Path(args.file)))
+        await run_plain(paras, title)
 
 
 if __name__ == "__main__":
