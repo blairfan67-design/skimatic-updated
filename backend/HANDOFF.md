@@ -49,7 +49,7 @@ Scoring is now one command each (tested in mock mode only, so far):
 
 All hand-checked: every sentence and every core phrase is an exact substring of its source. About 20% of sentences are highlighted.
 
-Known gap: the samples all come from one science paper, and `main` is over-used in them (11 of 22). Blair's spec wants 1–3 `main` per article, so don't treat the `main` labels in `gold.json` as gospel.
+Known gap: the samples all come from one science paper, and `main` is over-used in them (10 of 22). Blair's spec wants 1–3 `main` per article, so don't treat the `main` labels in `gold.json` as gospel. Team decision: a study's aim sentence ("…we investigated…") is **background**, not main; gold.json follows this.
 
 ## The one rule
 
