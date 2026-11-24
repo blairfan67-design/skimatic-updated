@@ -16,11 +16,11 @@ This branch is `frontend` plus my prompt work. Blair's backend (endpoints, exact
 ## What the prompts now ask for
 
 - Whole sentences copied character for character, including citation numbers and typos.
-- About 1 highlight per paragraph that has a claim, finding, setup or caveat; at most 2; none for methods, ethics or statistics-software paragraphs. About 15–20% of sentences overall.
-- `main` 1–3 times per article, at least once. Every setup paragraph gets a `background`. `counter` is hunted actively ("however", "although", "limitations", "small sample"…).
+- (Superseded for `/analyze`: see "Role accuracy" below. Selection is now about 10% of sentences, at most 1 per paragraph, at most 12, none for methods, ethics or statistics-software paragraphs.)
+- `main` 1–3 times per article, at least once.
 - `/simplify`: 2–4 exact pieces in reading order, keeping words that change the meaning ("was significantly higher", "might", "not", "for control children").
 - Article text sits between delimiters and is treated as data, not instructions.
-- Each prompt ends with an explicit JSON example, because `ask_json` passes no response schema. Keep those lines.
+- Each prompt ends with an explicit JSON example. Keep those lines: `/simplify` and `/study` pass no response schema, and for `/analyze` the example and the schema must agree.
 
 ## Status: not yet scored against gold
 
@@ -49,7 +49,7 @@ Scoring is now one command each (tested in mock mode only, so far):
 
 All hand-checked: every sentence and every core phrase is an exact substring of its source. About 20% of sentences are highlighted.
 
-Known gap: the samples all come from one science paper, and `main` is over-used in them (11 of 22). Blair's spec wants 1–3 `main` per article, so don't treat the `main` labels in `gold.json` as gospel.
+Known gap: the samples all come from one science paper, and `main` is over-used in them (10 of 22). Blair's spec wants 1–3 `main` per article, so don't treat the `main` labels in `gold.json` as gospel. Team decision: a study's aim sentence ("…we investigated…") is **background**, not main; gold.json follows this.
 
 ## The one rule
 
@@ -73,6 +73,39 @@ Blair's spec asks for an in-memory dict. Use that. I have a working MongoDB Atla
 - `gold_simplify.json` rows 8 and 9 list their pieces out of sentence order. Not edited (it's hand-made data); `--score-simplify` now scores gold pieces in any order and prints a note.
 
 - `main` is capped at 3 per article after merging chunks (`cap_main` in main.py); the first 3 in article order are kept.
+
+## Role accuracy (branch `accuracy`)
+
+The team's complaint was that roles were often wrong (main vs evidence vs background), and
+the earlier request for FEWER highlights still stands, so nothing here raises the number of
+highlights: about 10% of sentences, at most 1 per paragraph, at most 12 per call.
+
+What changed:
+
+| Where | Change |
+|---|---|
+| `prompts.py` `ANALYZE_PROMPT` | Rewritten. The model first writes a one-sentence `"thesis"` (the article's central claim), then labels each pick by its relation to that thesis with four tests applied in order: **counter** (cuts against the thesis: a limitation of this study, a contradicting result, an opposing view; explicitly NOT a supportive "however", a hedged own conclusion, a research gap the paper fills, or a null finding), **background** (not this article's own result: the problem, prevalence, earlier work, the gap, the aim, even with numbers), **evidence** (this article's specific results, with figures, including null findings), **main** (the thesis or a top-level conclusion in general words, 1–3 times, one per distinct claim, evidence when unsure). Section headings give priors (introduction → background, results → evidence, limitations → counter, conclusion → main). One worked example from an unrelated topic. Dropped: the "however/although" keyword hunt (it labelled supportive sentences counter) and "every setup paragraph gets a background" (it used 3 of the 12 slots on the intro). Kept: exact-copy rules, no overlap, empty-list fallback, data markers. |
+| `prompts.format_paragraphs` | Shows the title at the top (`Title: ...`, `(none)` if empty) and a `## Heading` line before a paragraph whenever the section heading changes. Title, headings and context are collapsed to one line and `<<<`/`>>>` runs are removed, so page text can't fake a paragraph, a heading or the end of the data. |
+| `main.py` | `AnalyzeRequest.title` (optional, ≤ 300) and `Paragraph.heading` (optional, ≤ 200); longer → 422. Long articles: every chunk after the first gets the title and the first paragraph (lede/abstract, cut to 1,500 characters) as a `(context, do not highlight)` line, so each chunk knows the thesis; the existing filter still only accepts highlights from the chunk's own paragraphs. The cache key now covers title, headings and context. The thesis is read nowhere: `ask_chunk` keeps only `highlights`, so it is never returned, cached or logged. |
+| `llm.py` | `/analyze` uses Gemini structured output: `GenerateContentConfig(response_mime_type="application/json", response_schema=analyze_schema())`, with `thesis` ordered first and `role` as an enum. Replies are still parsed with `json.loads` and still filtered. `/simplify` and `/study` send no schema (unchanged). `llm.analyze(paragraphs, title="", context="")`; mock mode returns a fake thesis too, so tests prove it is dropped. |
+| `prompt_lab.py`, `test_paragraphs.txt` | The test file now has `# title:` and `# heading:` comment lines (paragraph text unchanged, so `gold.json` still matches). `prompt_lab` sends them and prints the model's thesis; `--plain` leaves them out. |
+| Extension | `content.js` `extractArticle()` sends `title` and, per paragraph, the nearest preceding `h1`–`h4` of Readability's article as `heading` (cut to 300 / 200 characters); `background.js` passes the title to `/analyze`. |
+| Tests | `tests/test_accuracy.py` (formatting, request limits, thesis never in response/log/cache, schema passed, chunk context present but not highlightable, cache key). Existing fakes of `llm.analyze` now accept keyword arguments. |
+
+How to measure (1 Gemini call each, needs the real key):
+
+```
+python prompt_lab.py --score          # with title + headings, as the extension sends
+python prompt_lab.py --score --plain  # without them, comparable with older runs
+```
+
+Look at, in this order: exact-match rate (must stay ~100%), "same role when both" (role
+accuracy on matched picks; remember gold over-uses `main`, so a gold-`main` labelled
+`evidence` is not really wrong), precision, the role table (`main` 1–3, at least one
+`counter`) and the printed thesis (a wrong thesis explains wrong roles). Recall is capped by
+the 12-highlight limit on purpose; don't chase it. The new prompt has NOT yet been scored with
+the real model; four simulated runs of the candidate designs it combines scored role
+agreement 0.71–0.86 and precision 0.60–0.82 on this article.
 
 ## `/study`: pre-questions and a quiz (active recall)
 
@@ -100,7 +133,7 @@ Blair's spec asks for an in-memory dict. Use that. I have a working MongoDB Atla
 
 ## Not done
 
-- Scoring the current prompts against `gold.json` with the real model (blocked on quota; the commands are ready).
+- Scoring the current prompts against `gold.json` with the real model (blocked on quota; the commands are ready). Includes the new role-accuracy `ANALYZE_PROMPT`.
 - `/simplify` speed (~4 s; the target is ~2 s).
 - Deploy to Render.
 - The security gate items in `CLAUDE.md`, which should be finished before the demo.
@@ -118,5 +151,6 @@ Ask me. I know where the bodies are buried in the prompt.
   rebuilt from positions. Cached questions may paraphrase the article (and the mock's quiz
   questions quote the first few words of a paragraph). They are kept in memory only, cleared on
   restart, and never logged: `/study` logs only counts and cache hit/miss.
+- `/analyze`'s `thesis` (a model-written paraphrase of the article) is thrown away as soon as the reply is parsed: not returned, not cached, not logged. The title and headings are treated like article text (only inside the hashed cache key, never logged). `prompt_lab.py` prints the thesis to your own terminal only.
 - Pitch line: "Skimatic never stores or logs what you read." (Honest version with `/study`:
   "Skimatic never logs what you read, and keeps nothing after a restart.")

@@ -27,7 +27,7 @@ class Counter:
         self.answer = answer
         self.calls = []
 
-    async def __call__(self, arg):
+    async def __call__(self, arg, **kw):
         self.calls.append(arg)
         return self.answer(arg) if callable(self.answer) else self.answer
 
@@ -58,7 +58,7 @@ def test_simplify_cache_hit_makes_no_second_call(monkeypatch):
 
 
 def test_failures_are_not_cached(monkeypatch):
-    async def boom(_):
+    async def boom(_, **kw):
         raise RuntimeError("down")
     monkeypatch.setattr(main.llm, "analyze", boom)
     assert client.post("/analyze", json={"paragraphs": PARAS}).status_code == 502
@@ -110,7 +110,7 @@ def test_identical_requests_at_the_same_time_make_one_call(monkeypatch):
 
     calls = []
 
-    async def slow(chunk):
+    async def slow(chunk, **kw):
         calls.append(chunk)
         await asyncio.sleep(0.05)  # still running when the second request arrives
         return {"highlights": [{"paragraph_id": 0, "text": "Cats sleep a lot.", "role": "main"}]}
@@ -289,7 +289,7 @@ def test_failed_chunk_is_the_only_one_paid_again(monkeypatch, small_chunks):
             raise RuntimeError("chunk failed")
         return {"highlights": [{"paragraph_id": chunk[0].id, "text": chunk[0].text, "role": "main"}]}
 
-    async def flaky(chunk):
+    async def flaky(chunk, **kw):
         calls.append(chunk[0].id)
         return answer(chunk)
 
@@ -309,7 +309,7 @@ def test_one_429_stops_the_other_chunks(monkeypatch, small_chunks):
     paras = [{"id": i, "text": f"Para {i}."} for i in range(60)]
     calls = []
 
-    async def exhausted(chunk):
+    async def exhausted(chunk, **kw):
         calls.append(chunk)
         raise DAILY_429
 
@@ -324,7 +324,7 @@ def test_all_chunks_failing_reports_the_daily_limit(monkeypatch, small_chunks):
     # the reader must hear "daily limit", not "try again".
     paras = [{"id": i, "text": f"Para {i}."} for i in range(60)]
 
-    async def fail(chunk):
+    async def fail(chunk, **kw):
         if chunk[0].id == 0:
             raise ValueError("bad json")
         raise DAILY_429
@@ -439,7 +439,7 @@ def test_filter_accepts_quoted_or_float_ids():
 def test_bad_id_in_one_chunk_keeps_the_others(monkeypatch, small_chunks):
     paras = [{"id": i, "text": f"Para {i}."} for i in range(40)]
 
-    async def answer(chunk):
+    async def answer(chunk, **kw):
         pid = [chunk[0].id] if chunk[0].id == 0 else chunk[0].id
         return {"highlights": [{"paragraph_id": pid, "text": chunk[0].text, "role": "main"}]}
 
@@ -471,7 +471,7 @@ def test_simplify_endpoint_filters(monkeypatch):
     (ValueError("Expecting value: line 1 column 1"), 502, "didn't answer properly"),
 ])
 def test_errors_become_human_messages(monkeypatch, error, status, words):
-    async def boom(_):
+    async def boom(_, **kw):
         raise error
     monkeypatch.setattr(main.llm, "analyze", boom)
     monkeypatch.setattr(main.llm, "simplify", boom)
@@ -515,7 +515,7 @@ def test_prompt_lab_survives_odd_replies(monkeypatch, capsys, reply):
 
     import prompt_lab
 
-    async def fake(paras):
+    async def fake(paras, **kw):
         return reply
 
     monkeypatch.setattr(prompt_lab.llm, "analyze", fake)
@@ -535,7 +535,7 @@ def test_unicode_digit_id_is_not_an_id(pid):
 
 def test_unicode_digit_id_keeps_other_highlights(monkeypatch):
     # One odd id must not throw away the valid highlights of the same reply.
-    async def fake(paras):
+    async def fake(paras, **kw):
         return {"highlights": [
             {"paragraph_id": "²", "text": PARAS[0]["text"], "role": "main"},
             {"paragraph_id": PARAS[0]["id"], "text": PARAS[0]["text"], "role": "main"},
@@ -552,7 +552,7 @@ def test_prompt_lab_score_survives_cut_off_json(monkeypatch, capsys):
 
     import prompt_lab
 
-    async def cut_off(prompt):
+    async def cut_off(prompt, schema=None):
         return '{"highlights": [{"paragraph_id": 0, "text": "cut off'
 
     monkeypatch.setattr(llm, "MOCK", False)

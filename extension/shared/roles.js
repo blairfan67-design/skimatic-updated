@@ -7,6 +7,16 @@ self.SCR_ROLES = [
   { key: "counter",    label: "Other side", hint: "Caveats, limits and objections",             defaultColor: "#e8a0bf" },
 ];
 
+// Cut page text to at most `max` characters without splitting an emoji or other
+// astral character: String.prototype.slice counts UTF-16 code units, and a lone
+// surrogate left at the cut makes the backend reject the whole request (422).
+// toWellFormed() also replaces any lone surrogate already in the page text.
+self.SCR_cutText = (s, max) => {
+  let out = String(s).slice(0, max);
+  if (/[\uD800-\uDBFF]$/.test(out)) out = out.slice(0, -1);
+  return out.toWellFormed ? out.toWellFormed() : out;
+};
+
 // The only role names we accept from the backend or the page (anything else is dropped).
 self.SCR_ROLE_KEYS = self.SCR_ROLES.map((r) => r.key);
 

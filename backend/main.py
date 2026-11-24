@@ -154,10 +154,14 @@ STUDY_MAX_CHARS = 25_000
 class Paragraph(BaseModel):
     id: int
     text: str
+    # Optional: the section heading the paragraph sits under ("Results"), so the
+    # model can see the article's structure. Untrusted page text, like `text`.
+    heading: str = Field("", max_length=200)
 
 
 class AnalyzeRequest(BaseModel):
     paragraphs: list[Paragraph]  # size limits are checked in check_limits() for a readable message
+    title: str = Field("", max_length=300)  # optional; untrusted page text
 
 
 class Highlight(BaseModel):
@@ -347,17 +351,43 @@ async def ask_once(key: str, make_call):
     return await asyncio.shield(task)
 
 
-def chunk_key(chunk: list[Paragraph]) -> str:
-    """Cache key for one chunk. Whitespace is ignored: the filters forgive it too."""
-    return cache.make_key(
-        model_name(), prompts.ANALYZE_PROMPT, [[p.id, cache.normalize(p.text)] for p in chunk]
-    )
+def chunk_context(chunk: list[Paragraph], paragraphs: list[Paragraph]) -> str:
+    """Read-only context for a chunk: the article's first paragraph (lede or abstract),
+    so every chunk of a long article knows its thesis. "" for the chunk that has it.
+
+    The model is told not to highlight it, and it couldn't anyway: the filter
+    only accepts highlights from the chunk's own paragraphs.
+    """
+    return "" if chunk[0] is paragraphs[0] else paragraphs[0].text
 
 
-async def ask_chunk(chunk: list[Paragraph], key: str) -> list[dict]:
-    """One Gemini call for one chunk. Caches the cleaned answer if it has anything in it."""
+def chunk_key(chunk: list[Paragraph], title: str = "", context: str = "") -> str:
+    """Cache key for one chunk: everything the model sees (title, context, headings,
+    text). Whitespace is ignored: the filters forgive it too."""
+    return cache.make_key(model_name(), prompts.ANALYZE_PROMPT, {
+        "title": cache.normalize(title),
+        "context": cache.normalize(context),
+        "paragraphs": [[p.id, cache.normalize(p.text), cache.normalize(p.heading)] for p in chunk],
+    })
+
+
+def chunk_jobs(paragraphs: list[Paragraph], title: str) -> list[tuple[list[Paragraph], str, str]]:
+    """(chunk, context, cache key) for every chunk of the article."""
+    jobs = []
+    for chunk in split_into_chunks(paragraphs):
+        context = chunk_context(chunk, paragraphs)
+        jobs.append((chunk, context, chunk_key(chunk, title, context)))
+    return jobs
+
+
+async def ask_chunk(chunk: list[Paragraph], key: str, title: str = "", context: str = "") -> list[dict]:
+    """One Gemini call for one chunk. Caches the cleaned answer if it has anything in it.
+
+    The model also writes a "thesis" first (it steers the role labels). It is
+    dropped here: never returned, cached or logged.
+    """
     ratelimit.take_ai_call()  # 6.3 optional daily cap for the whole server
-    result = await llm.analyze(chunk)
+    result = await llm.analyze(chunk, title=title, context=context)
     raw = result.get("highlights", []) if isinstance(result, dict) else []
     highlights = filters.clean_highlights(raw, chunk)
     if highlights:  # an empty answer is a miss worth retrying, not something to remember
@@ -365,13 +395,14 @@ async def ask_chunk(chunk: list[Paragraph], key: str) -> list[dict]:
     return highlights
 
 
-async def analyze_chunk(chunk, limiter: asyncio.Semaphore, limit_errors: list) -> tuple[list[dict], bool]:
+async def analyze_chunk(job, limiter: asyncio.Semaphore, limit_errors: list,
+                        title: str = "") -> tuple[list[dict], bool]:
     """Highlights for one chunk, from the cache or from Gemini. Returns (highlights, was_cached).
 
     Each chunk is cached on its own, so if one chunk of a long article fails,
     analyzing again only pays for that chunk.
     """
-    key = chunk_key(chunk)
+    chunk, context, key = job
     positions = ANALYZE_CACHE.get(key)
     was_cached = positions is not None
     # 7.2 The cache keeps only positions; cut the sentences back out of the
@@ -382,7 +413,7 @@ async def analyze_chunk(chunk, limiter: asyncio.Semaphore, limit_errors: list) -
             if limit_errors:  # an earlier chunk hit a 429: more calls would fail too
                 raise limit_errors[0]
             try:
-                highlights = await ask_once(key, lambda: ask_chunk(chunk, key))
+                highlights = await ask_once(key, lambda: ask_chunk(chunk, key, title, context))
             except Exception as e:
                 if llm.error_kind(e) in ("quota", "rate_limit"):
                     limit_errors.append(e)
@@ -392,7 +423,7 @@ async def analyze_chunk(chunk, limiter: asyncio.Semaphore, limit_errors: list) -
     return filters.clean_highlights(highlights, chunk), was_cached
 
 
-async def analyze_in_chunks(paragraphs: list[Paragraph]) -> list[dict]:
+async def analyze_in_chunks(paragraphs: list[Paragraph], title: str = "") -> list[dict]:
     """Ask about every chunk (PARALLEL_CALLS at a time) and merge the answers.
 
     Highlights keep their original paragraph ids because each chunk is
@@ -400,11 +431,12 @@ async def analyze_in_chunks(paragraphs: list[Paragraph]) -> list[dict]:
     the others (their quota is already spent) and log how many are missing;
     the reader can press Analyze again to fill the gap. If all fail, raise.
     """
-    chunks = split_into_chunks(paragraphs)
+    jobs = chunk_jobs(paragraphs, title)
+    chunks = [chunk for chunk, _, _ in jobs]
     limiter = asyncio.Semaphore(PARALLEL_CALLS)
     limit_errors: list[Exception] = []
     results = await asyncio.gather(
-        *(analyze_chunk(c, limiter, limit_errors) for c in chunks), return_exceptions=True
+        *(analyze_chunk(job, limiter, limit_errors, title) for job in jobs), return_exceptions=True
     )
 
     merged, errors, from_cache = [], [], 0
@@ -436,10 +468,10 @@ async def analyze_in_chunks(paragraphs: list[Paragraph]) -> list[dict]:
 async def analyze(req: AnalyzeRequest, request: Request):
     paragraphs = check_limits(req.paragraphs)
     # 6.1 Per-IP limit before any Gemini call; a fully cached article is free.
-    if any(ANALYZE_CACHE.get(chunk_key(c)) is None for c in split_into_chunks(paragraphs)):
+    if any(ANALYZE_CACHE.get(key) is None for _, _, key in chunk_jobs(paragraphs, req.title)):
         ratelimit.check("analyze", request)
     try:
-        highlights = await analyze_in_chunks(paragraphs)
+        highlights = await analyze_in_chunks(paragraphs, req.title)
     except Exception as e:  # LLM down, bad JSON, quota, ...
         raise llm_failure(e)
     return AnalyzeResponse(highlights=[Highlight(**h) for h in cap_main(highlights)])
@@ -523,13 +555,15 @@ def study_paragraphs(paragraphs: list[Paragraph]) -> list[Paragraph]:
         total += len(p.text)
     if not kept:
         first = paragraphs[0]
-        kept = [Paragraph(id=first.id, text=first.text[:STUDY_MAX_CHARS])]
+        kept = [Paragraph(id=first.id, text=first.text[:STUDY_MAX_CHARS], heading=first.heading)]
     return kept
 
 
 def study_key(paragraphs: list[Paragraph]) -> str:
+    # Headings are part of what the model sees (format_paragraphs shows them).
     return cache.make_key(
-        model_name(), prompts.STUDY_PROMPT, [[p.id, cache.normalize(p.text)] for p in paragraphs]
+        model_name(), prompts.STUDY_PROMPT,
+        [[p.id, cache.normalize(p.text), cache.normalize(p.heading)] for p in paragraphs],
     )
 
 

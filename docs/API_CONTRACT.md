@@ -31,15 +31,26 @@ Request: the paragraphs the extension pulled out with Readability.
 
 ```json
 {
+  "title": "Optional article title",
   "paragraphs": [
-    { "id": 0, "text": "Full text of paragraph 0..." },
-    { "id": 1, "text": "Full text of paragraph 1..." }
+    { "id": 0, "text": "Full text of paragraph 0...", "heading": "Introduction" },
+    { "id": 1, "text": "Full text of paragraph 1...", "heading": "Results" }
   ]
 }
 ```
 
-Response: sentences to highlight. **`text` must be copied word-for-word from the
-paragraph**, otherwise the extension cannot find it on the page.
+- `title` (optional, string, ≤ 300 characters, default `""`): the article title.
+- `heading` (optional, string, ≤ 200 characters, default `""`): the section heading the
+  paragraph sits under (the nearest `h1`–`h4` above it), so the AI can tell the
+  introduction from the results or the conclusion. Send the same heading for every
+  paragraph of a section.
+- Both only help the AI label roles; they are never highlighted and never returned.
+  Longer values are a 422, so the extension cuts them first. Requests without them work
+  exactly as before.
+
+Response: sentences to highlight (unchanged). **`text` must be copied word-for-word from the
+paragraph**, otherwise the extension cannot find it on the page. Only `highlights` is
+returned: the one-sentence thesis the AI writes first stays on the server.
 
 ```json
 {
@@ -72,7 +83,7 @@ short multiple-choice quiz to check memory **after** reading. **One Gemini call 
 article**, cached, so studying the same article again is free.
 
 Request: the same shape and limits as `/analyze` (1–200 paragraphs, at most 60,000
-characters in total).
+characters in total). `title` is not used here; a paragraph's optional `heading` is.
 
 ```json
 { "paragraphs": [ { "id": 0, "text": "Full text of paragraph 0..." } ] }
